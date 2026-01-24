@@ -338,6 +338,7 @@
                         <TextBox Text="{Binding MaxConcurrentTransfersInput, UpdateSourceTrigger=PropertyChanged}"
                                  Width="50" Height="22" Margin="0,0,6,0" />
                         <Button Content="変更" Command="{Binding ApplyMaxConcurrentTransfersCommand}" Margin="0,0,6,0" />
+                        <Button Content="クリア" Command="{Binding ClearTransferHistoryCommand}" Margin="0,0,6,0" />
                         <TextBlock Text="{Binding TransferSummary.ConcurrentText}" />
                     </StackPanel>
 
@@ -416,6 +417,21 @@
                             <DataGridTextColumn Header="出力先" Binding="{Binding OutputRoot}" Width="240" />
                             <DataGridTextColumn Header="メモ" Binding="{Binding Memo}" Width="*" />
                             <DataGridTextColumn Header="件数" Binding="{Binding ItemCount}" Width="60" />
+                            <DataGridTemplateColumn Header="操作" Width="140">
+                                <DataGridTemplateColumn.CellTemplate>
+                                    <DataTemplate>
+                                        <StackPanel Orientation="Horizontal">
+                                            <Button Content="開く"
+                                                    Margin="0,0,6,0"
+                                                    Command="{Binding DataContext.OpenHistoryFolderCommand, RelativeSource={RelativeSource AncestorType=DataGrid}}"
+                                                    CommandParameter="{Binding}" />
+                                            <Button Content="削除"
+                                                    Command="{Binding DataContext.DeleteHistoryFolderCommand, RelativeSource={RelativeSource AncestorType=DataGrid}}"
+                                                    CommandParameter="{Binding}" />
+                                        </StackPanel>
+                                    </DataTemplate>
+                                </DataGridTemplateColumn.CellTemplate>
+                            </DataGridTemplateColumn>
                         </DataGrid.Columns>
                     </DataGrid>
                 </Grid>

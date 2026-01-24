@@ -1,6 +1,7 @@
 ﻿using System;
 using System.Collections.Generic;
 using System.Collections.ObjectModel;
+using System.Diagnostics;
 using System.IO;
 using System.Linq;
 using System.Text;
@@ -736,6 +737,100 @@ public partial class MainViewModel : ObservableObject
 
         await _databaseService.ExportHistoryCsvAsync(dialog.FileName);
         WpfMessageBox.Show("CSVを出力しました。", "Export", MessageBoxButton.OK, MessageBoxImage.Information);
+    }
+
+    [RelayCommand]
+    private void OpenHistoryFolder(HistoryItemViewModel? item)
+    {
+        if (item == null)
+        {
+            return;
+        }
+
+        var path = item.OutputRoot;
+        if (string.IsNullOrWhiteSpace(path))
+        {
+            WpfMessageBox.Show("出力先が設定されていません。", "情報", MessageBoxButton.OK, MessageBoxImage.Information);
+            return;
+        }
+
+        if (!Directory.Exists(path))
+        {
+            WpfMessageBox.Show($"フォルダが見つかりません: {path}", "情報", MessageBoxButton.OK, MessageBoxImage.Information);
+            return;
+        }
+
+        Process.Start(new ProcessStartInfo
+        {
+            FileName = path,
+            UseShellExecute = true
+        });
+    }
+
+    [RelayCommand]
+    private void DeleteHistoryFolder(HistoryItemViewModel? item)
+    {
+        if (item == null)
+        {
+            return;
+        }
+
+        var path = item.OutputRoot;
+        if (string.IsNullOrWhiteSpace(path))
+        {
+            WpfMessageBox.Show("出力先が設定されていません。", "情報", MessageBoxButton.OK, MessageBoxImage.Information);
+            return;
+        }
+
+        if (!Directory.Exists(path))
+        {
+            WpfMessageBox.Show($"フォルダが見つかりません: {path}", "情報", MessageBoxButton.OK, MessageBoxImage.Information);
+            return;
+        }
+
+        var result = WpfMessageBox.Show($"フォルダを削除しますか？\n{path}", "確認", MessageBoxButton.YesNo, MessageBoxImage.Warning);
+        if (result != MessageBoxResult.Yes)
+        {
+            return;
+        }
+
+        try
+        {
+            Directory.Delete(path, true);
+        }
+        catch (Exception ex)
+        {
+            WpfMessageBox.Show($"フォルダの削除に失敗しました: {ex.Message}", "Error", MessageBoxButton.OK, MessageBoxImage.Error);
+        }
+    }
+
+    [RelayCommand]
+    private async Task ClearTransferHistoryAsync()
+    {
+        var removable = TransferItems.Where(item =>
+            item.Status is TransferStatus.Completed or TransferStatus.Failed or TransferStatus.Canceled).ToList();
+        if (removable.Count == 0)
+        {
+            WpfMessageBox.Show("削除できる転送履歴がありません。", "情報", MessageBoxButton.OK, MessageBoxImage.Information);
+            return;
+        }
+
+        var result = WpfMessageBox.Show("完了/失敗/キャンセル済みの転送履歴を削除しますか？",
+            "確認",
+            MessageBoxButton.YesNo,
+            MessageBoxImage.Warning);
+        if (result != MessageBoxResult.Yes)
+        {
+            return;
+        }
+
+        await _databaseService.ClearTransferHistoryAsync();
+        foreach (var item in removable)
+        {
+            TransferItems.Remove(item);
+        }
+
+        TransferSummary.Update(TransferItems, MaxConcurrentTransfers);
     }
 
     [RelayCommand]

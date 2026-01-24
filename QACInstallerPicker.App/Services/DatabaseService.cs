@@ -3,6 +3,7 @@ using System.Collections.Generic;
 using System.Globalization;
 using System.IO;
 using System.Text;
+using System.Text.Json;
 using System.Threading.Tasks;
 using Microsoft.Data.Sqlite;
 using QACInstallerPicker.App.Helpers;
@@ -199,6 +200,7 @@ DO UPDATE SET sha256 = excluded.sha256, calculated_at_utc = excluded.calculated_
         var command = connection.CreateCommand();
         command.CommandText = @"
 SELECT b.id, b.timestamp_utc, b.company, b.helix_version, b.output_root, b.memo,
+       b.selected_logical_items,
        COUNT(t.id) AS item_count
 FROM batches b
 LEFT JOIN transfer_items t ON t.batch_id = b.id
@@ -208,6 +210,13 @@ ORDER BY b.timestamp_utc DESC;
         await using var reader = await command.ExecuteReaderAsync();
         while (await reader.ReadAsync())
         {
+            var selectedJson = reader.IsDBNull(6) ? string.Empty : reader.GetString(6);
+            var itemCount = reader.GetInt32(7);
+            if (itemCount == 0 && !string.IsNullOrWhiteSpace(selectedJson))
+            {
+                itemCount = TryGetItemCountFromJson(selectedJson);
+            }
+
             items.Add(new HistoryItem
             {
                 BatchId = reader.GetInt64(0),
@@ -216,7 +225,7 @@ ORDER BY b.timestamp_utc DESC;
                 HelixVersion = reader.GetString(3),
                 OutputRoot = reader.GetString(4),
                 Memo = reader.GetString(5),
-                ItemCount = reader.GetInt32(6)
+                ItemCount = itemCount
             });
         }
 
@@ -278,6 +287,18 @@ ORDER BY t.id;
         File.WriteAllText(path, sb.ToString(), Encoding.UTF8);
     }
 
+    public async Task ClearTransferHistoryAsync()
+    {
+        await using var connection = CreateConnection();
+        await connection.OpenAsync();
+        var command = connection.CreateCommand();
+        command.CommandText = @"
+DELETE FROM transfer_items
+WHERE status IN ('Completed', 'Failed', 'Canceled');
+";
+        await command.ExecuteNonQueryAsync();
+    }
+
     public async Task ClearHistoryAsync()
     {
         await using var connection = CreateConnection();
@@ -299,6 +320,24 @@ ORDER BY t.id;
     private static string Escape(string value)
     {
         return value.Replace("\"", "\"\"");
+    }
+
+    private static int TryGetItemCountFromJson(string json)
+    {
+        try
+        {
+            using var doc = JsonDocument.Parse(json);
+            if (doc.RootElement.ValueKind == JsonValueKind.Array)
+            {
+                return doc.RootElement.GetArrayLength();
+            }
+        }
+        catch
+        {
+            // Ignore invalid JSON and fall back to zero.
+        }
+
+        return 0;
     }
 
     private SqliteConnection CreateConnection()
