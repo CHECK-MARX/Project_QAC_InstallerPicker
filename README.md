@@ -1,5 +1,7 @@
 # QACInstallerPicker
 
+[![CI Build](https://github.com/CHECK-MARX/Project_QAC_InstallerPicker/actions/workflows/ci.yml/badge.svg)](https://github.com/CHECK-MARX/Project_QAC_InstallerPicker/actions/workflows/ci.yml)
+
 .NET 8（WPF + WinForms）で作成した Windows デスクトップアプリです。
 
 ## 前提
