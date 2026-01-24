@@ -33,6 +33,7 @@
         <TextBox Grid.Row="3" Grid.Column="1" Text="{Binding MaxConcurrentTransfers}" Width="80" Margin="0,0,0,8" />
 
         <StackPanel Grid.Row="5" Grid.Column="0" Grid.ColumnSpan="3" Orientation="Horizontal" HorizontalAlignment="Right">
+            <Button Content="初期化" Width="90" Margin="0,8,8,0" Command="{Binding ResetCommand}" />
             <Button Content="保存" Width="90" Margin="0,8,8,0" Command="{Binding SaveCommand}" />
             <Button Content="キャンセル" Width="90" Margin="0,8,0,0" Command="{Binding CancelCommand}" />
         </StackPanel>

@@ -56,6 +56,15 @@ public partial class SettingsViewModel : ObservableObject
     }
 
     [RelayCommand]
+    private void Reset()
+    {
+        ExcelPath = string.Empty;
+        UncRoot = string.Empty;
+        OutputBaseFolder = string.Empty;
+        MaxConcurrentTransfers = 2;
+    }
+
+    [RelayCommand]
     private void BrowseExcel()
     {
         var dialog = new Win32.OpenFileDialog
