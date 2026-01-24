@@ -1,0 +1,425 @@
+﻿<Window x:Class="QACInstallerPicker.App.MainWindow"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
+        xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
+        xmlns:local="clr-namespace:QACInstallerPicker.App"
+        mc:Ignorable="d"
+        Title="QAC インストーラ選定ツール" Height="900" Width="1300">
+    <Window.Resources>
+        <BooleanToVisibilityConverter x:Key="BoolToVis" />
+    </Window.Resources>
+    <Grid>
+        <Grid.RowDefinitions>
+            <RowDefinition Height="Auto" />
+            <RowDefinition Height="*" />
+        </Grid.RowDefinitions>
+
+        <Border Grid.Row="0" Background="#F3F3F3" Padding="8">
+            <Grid>
+                <Grid.ColumnDefinitions>
+                    <ColumnDefinition Width="320" />
+                    <ColumnDefinition Width="Auto" />
+                    <ColumnDefinition Width="Auto" />
+                    <ColumnDefinition Width="Auto" />
+                    <ColumnDefinition Width="*" />
+                </Grid.ColumnDefinitions>
+
+                <TextBox Grid.Column="0" Height="28" Margin="0,0,8,0"
+                         Text="{Binding SearchText, UpdateSourceTrigger=PropertyChanged}" />
+                <Button Grid.Column="1" Content="対応表読み込み" Margin="0,0,8,0" Padding="10,4"
+                        Command="{Binding LoadExcelCommand}" />
+                <Button Grid.Column="2" Content="共有スキャン" Margin="0,0,8,0" Padding="10,4"
+                        Command="{Binding ScanInstallersCommand}" />
+                <Button Grid.Column="3" Content="設定" Margin="0,0,8,0" Padding="10,4"
+                        Command="{Binding OpenSettingsCommand}" />
+                <TextBlock Grid.Column="4" VerticalAlignment="Center" Text="{Binding SettingsSummary}" Foreground="#555" />
+            </Grid>
+        </Border>
+
+        <TabControl Grid.Row="1" SelectedIndex="{Binding SelectedMainTabIndex}">
+            <TabItem Header="選定">
+                <Grid Margin="8">
+                    <Grid.RowDefinitions>
+                        <RowDefinition Height="*" />
+                        <RowDefinition Height="Auto" />
+                    </Grid.RowDefinitions>
+                    <Grid.ColumnDefinitions>
+                        <ColumnDefinition Width="3*" />
+                        <ColumnDefinition Width="2*" />
+                    </Grid.ColumnDefinitions>
+
+                    <DockPanel Grid.Row="0" Grid.Column="0">
+                        <TextBlock DockPanel.Dock="Top" Text="手順: 対応表読み込み → 共有スキャン → モジュール選択 → キュー追加"
+                                   Foreground="#555" Margin="0,0,0,4" />
+                        <TextBlock DockPanel.Dock="Top" Text="{Binding SelectedVersion.Version, StringFormat=Helixバージョン: {0}}"
+                                   Margin="0,0,0,6" />
+                        <StackPanel Orientation="Horizontal" DockPanel.Dock="Top" HorizontalAlignment="Right" Margin="0,0,0,6">
+                            <Button Content="全選択" Command="{Binding SelectAllModulesCommand}" Margin="0,0,6,0" />
+                            <Button Content="全解除" Command="{Binding ClearModuleSelectionCommand}" />
+                        </StackPanel>
+                        <TabControl ItemsSource="{Binding HelixVersions}"
+                                    SelectedItem="{Binding SelectedVersion}">
+                            <TabControl.ItemTemplate>
+                                <DataTemplate>
+                                    <TextBlock Text="{Binding Version}" />
+                                </DataTemplate>
+                            </TabControl.ItemTemplate>
+                            <TabControl.ContentTemplate>
+                                <DataTemplate>
+                                    <DataGrid ItemsSource="{Binding ModulesView}" AutoGenerateColumns="False"
+                                              CanUserAddRows="False" IsReadOnly="False" HeadersVisibility="Column"
+                                              SelectionMode="Single" Margin="0,8,8,0">
+                                        <DataGrid.RowStyle>
+                                            <Style TargetType="DataGridRow">
+                                                <Setter Property="IsEnabled" Value="{Binding IsEnabled}" />
+                                                <Setter Property="ToolTip" Value="{Binding DisabledReason}" />
+                                                <Style.Triggers>
+                                                    <Trigger Property="IsEnabled" Value="False">
+                                                        <Setter Property="Foreground" Value="Gray" />
+                                                    </Trigger>
+                                                </Style.Triggers>
+                                            </Style>
+                                        </DataGrid.RowStyle>
+                                        <DataGrid.Columns>
+                                            <DataGridTemplateColumn Header="選択" Width="60">
+                                                <DataGridTemplateColumn.CellTemplate>
+                                                    <DataTemplate>
+                                                        <CheckBox IsChecked="{Binding IsSelected, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}"
+                                                                  IsEnabled="{Binding IsEnabled}"
+                                                                  Visibility="{Binding IsSelectionVisible, Converter={StaticResource BoolToVis}}"
+                                                                  HorizontalAlignment="Center" />
+                                                    </DataTemplate>
+                                                </DataGridTemplateColumn.CellTemplate>
+                                            </DataGridTemplateColumn>
+                                            <DataGridTextColumn Header="コード" Binding="{Binding Code}" Width="100">
+                                                <DataGridTextColumn.ElementStyle>
+                                                    <Style TargetType="TextBlock">
+                                                        <Setter Property="ToolTip" Value="{Binding Name}" />
+                                                    </Style>
+                                                </DataGridTextColumn.ElementStyle>
+                                            </DataGridTextColumn>
+                                            <DataGridTextColumn Header="名称" Binding="{Binding Name}" Width="220" />
+                                            <DataGridTextColumn Header="対応表版数" Binding="{Binding ModuleVersion}" Width="120" />
+                                            <DataGridTemplateColumn Header="選択版数" Width="120">
+                                                <DataGridTemplateColumn.CellTemplate>
+                                                    <DataTemplate>
+                                                        <ComboBox ItemsSource="{Binding InstallerVersionOptions}"
+                                                                  SelectedItem="{Binding SelectedInstallerVersion, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}"
+                                                                  Visibility="{Binding HasInstallerVersionOptions, Converter={StaticResource BoolToVis}}"
+                                                                  MinWidth="100" />
+                                                    </DataTemplate>
+                                                </DataGridTemplateColumn.CellTemplate>
+                                            </DataGridTemplateColumn>
+                                            <DataGridTextColumn Header="対応OS" Binding="{Binding OsDisplay}" Width="100" />
+                                            <DataGridTemplateColumn Header="選択OS" Width="90">
+                                                <DataGridTemplateColumn.CellTemplate>
+                                                    <DataTemplate>
+                                                        <ComboBox ItemsSource="{Binding OsSelectionOptions}"
+                                                                  SelectedItem="{Binding OsSelection, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}"
+                                                                  ToolTip="{Binding OsDisplay}"
+                                                                  MinWidth="80" />
+                                                    </DataTemplate>
+                                                </DataGridTemplateColumn.CellTemplate>
+                                            </DataGridTemplateColumn>
+                                            <DataGridTextColumn Header="対応" Binding="{Binding SupportText}" Width="120" />
+                                        </DataGrid.Columns>
+                                    </DataGrid>
+                                </DataTemplate>
+                            </TabControl.ContentTemplate>
+                        </TabControl>
+                    </DockPanel>
+
+                    <Grid Grid.Row="0" Grid.Column="1">
+                    <Grid.RowDefinitions>
+                        <RowDefinition Height="2*" />
+                        <RowDefinition Height="Auto" />
+                        <RowDefinition Height="1*" />
+                        <RowDefinition Height="1*" />
+                    </Grid.RowDefinitions>
+
+                        <GroupBox Header="プレビュー (選択一覧)" Grid.Row="0" Margin="8,8,0,8">
+                            <DataGrid ItemsSource="{Binding BasketItems}" AutoGenerateColumns="False"
+                                      CanUserAddRows="False" IsReadOnly="True">
+                                <DataGrid.RowStyle>
+                                    <Style TargetType="DataGridRow">
+                                        <Setter Property="ToolTip" Value="{Binding Reason}" />
+                                        <Style.Triggers>
+                                            <DataTrigger Binding="{Binding IsMissing}" Value="True">
+                                                <Setter Property="Foreground" Value="Gray" />
+                                            </DataTrigger>
+                                        </Style.Triggers>
+                                    </Style>
+                                </DataGrid.RowStyle>
+                                <DataGrid.Columns>
+                                    <DataGridTextColumn Header="Helix" Binding="{Binding HelixVersion}" Width="110" />
+                                    <DataGridTextColumn Header="コード" Binding="{Binding Code}" Width="80" />
+                                    <DataGridTextColumn Header="名称" Binding="{Binding Name}" Width="160" />
+                                    <DataGridTextColumn Header="版数" Binding="{Binding ModuleVersion}" Width="90" />
+                                    <DataGridTextColumn Header="実ファイル版数" Binding="{Binding InstallerVersion}" Width="110" />
+                                    <DataGridTextColumn Header="OS" Binding="{Binding Os}" Width="70" />
+                                    <DataGridTextColumn Header="ファイル" Binding="{Binding AssetFileName}" Width="*" />
+                                    <DataGridTextColumn Header="理由" Binding="{Binding Reason}" Width="120" />
+                                    <DataGridTemplateColumn Header="解除" Width="70">
+                                        <DataGridTemplateColumn.CellTemplate>
+                                            <DataTemplate>
+                                                <Button Content="解除"
+                                                        Command="{Binding DataContext.RemoveBasketItemCommand, RelativeSource={RelativeSource AncestorType=DataGrid}}"
+                                                        CommandParameter="{Binding}" />
+                                            </DataTemplate>
+                                        </DataGridTemplateColumn.CellTemplate>
+                                    </DataGridTemplateColumn>
+                                </DataGrid.Columns>
+                            </DataGrid>
+                        </GroupBox>
+
+                        <GroupBox Header="メール貼り付け用リスト" Grid.Row="1" Margin="8,0,0,8">
+                            <StackPanel>
+                                <StackPanel Orientation="Horizontal" HorizontalAlignment="Right" Margin="0,0,0,6">
+                                    <Button Content="リストコピー" Command="{Binding CopyUploadListCommand}" />
+                                </StackPanel>
+                                <TextBox Text="{Binding UploadListText, UpdateSourceTrigger=PropertyChanged}" Height="120"
+                                         AcceptsReturn="True" TextWrapping="Wrap" />
+                            </StackPanel>
+                        </GroupBox>
+
+                        <GroupBox Header="メール/メモ" Grid.Row="2" Margin="8,0,0,8">
+                            <Grid>
+                                <Grid.RowDefinitions>
+                                    <RowDefinition Height="*" />
+                                    <RowDefinition Height="Auto" />
+                                    <RowDefinition Height="Auto" />
+                                </Grid.RowDefinitions>
+                                <TextBox Grid.Row="0" Text="{Binding MemoText, UpdateSourceTrigger=PropertyChanged}"
+                                         AcceptsReturn="True" TextWrapping="Wrap"
+                                         VerticalScrollBarVisibility="Auto"
+                                         HorizontalScrollBarVisibility="Auto" />
+                                <StackPanel Grid.Row="1" Orientation="Horizontal" HorizontalAlignment="Right" Margin="0,6,0,0">
+                                    <Button Content="クリア" Command="{Binding ClearMemoCommand}" Margin="0,0,6,0" />
+                                    <Button Content="適用" Command="{Binding ApplyQuickRequestCommand}" />
+                                </StackPanel>
+                                <TextBlock Grid.Row="2" Text="{Binding QuickRequestResult}" Foreground="#555" TextWrapping="Wrap" />
+                            </Grid>
+                        </GroupBox>
+
+                        <GroupBox Header="未解決/あいまい" Grid.Row="3" Margin="8,0,0,0">
+                            <StackPanel>
+                                <TextBlock Text="未解決:" Margin="0,0,0,4" />
+                                <ListBox ItemsSource="{Binding UnresolvedTerms}" Height="60" />
+                                <TextBlock Text="曖昧:" Margin="0,8,0,4" />
+                                <ItemsControl ItemsSource="{Binding AmbiguousTerms}">
+                                    <ItemsControl.ItemTemplate>
+                                        <DataTemplate>
+                                            <StackPanel Orientation="Horizontal" Margin="0,2">
+                                                <TextBlock Text="{Binding Term}" Width="140" />
+                                                <ComboBox ItemsSource="{Binding Candidates}" SelectedItem="{Binding SelectedCode}" Width="160" />
+                                            </StackPanel>
+                                        </DataTemplate>
+                                    </ItemsControl.ItemTemplate>
+                                </ItemsControl>
+                            </StackPanel>
+                        </GroupBox>
+                    </Grid>
+
+                    <Border Grid.Row="1" Grid.Column="0" Grid.ColumnSpan="2" Background="#F7F7F7" Padding="8" Margin="0,8,0,0">
+                        <Grid>
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="Auto" />
+                                <ColumnDefinition Width="160" />
+                                <ColumnDefinition Width="Auto" />
+                                <ColumnDefinition Width="220" />
+                                <ColumnDefinition Width="Auto" />
+                                <ColumnDefinition Width="260" />
+                                <ColumnDefinition Width="Auto" />
+                                <ColumnDefinition Width="80" />
+                                <ColumnDefinition Width="Auto" />
+                            </Grid.ColumnDefinitions>
+
+                            <TextBlock Grid.Column="0" Text="会社名" VerticalAlignment="Center" Margin="0,0,6,0" />
+                            <TextBox Grid.Column="1" Text="{Binding CompanyName, UpdateSourceTrigger=PropertyChanged}" Height="26" />
+
+                            <TextBlock Grid.Column="2" Text="出力ベース" VerticalAlignment="Center" Margin="12,0,6,0" />
+                            <TextBox Grid.Column="3" Text="{Binding OutputBaseFolder, UpdateSourceTrigger=PropertyChanged}" Height="26" />
+
+                            <TextBlock Grid.Column="4" Text="出力先" VerticalAlignment="Center" Margin="12,0,6,0" />
+                            <TextBox Grid.Column="5" Text="{Binding OutputFolderPreview, Mode=OneWay}" Height="26" IsReadOnly="True" />
+
+                            <TextBlock Grid.Column="6" Text="同時実行数" VerticalAlignment="Center" Margin="12,0,6,0" />
+                            <TextBox Grid.Column="7" Text="{Binding MaxConcurrentTransfers}" Height="26" />
+
+                            <Button Grid.Column="8" Content="キュー追加" Margin="12,0,0,0" Padding="12,4" Command="{Binding QueueAddCommand}" />
+                        </Grid>
+                    </Border>
+                </Grid>
+            </TabItem>
+
+            <TabItem Header="スキャン">
+                <Grid Margin="8">
+                    <Grid.RowDefinitions>
+                        <RowDefinition Height="Auto" />
+                        <RowDefinition Height="Auto" />
+                        <RowDefinition Height="*" />
+                        <RowDefinition Height="*" />
+                    </Grid.RowDefinitions>
+
+                    <TextBlock Grid.Row="0" Text="{Binding ScanSummaryText}" Margin="0,0,0,8" />
+
+                    <GroupBox Grid.Row="1" Header="スキャンエラー" Margin="0,0,0,8">
+                        <ListBox ItemsSource="{Binding ScanErrors}" Height="80" />
+                    </GroupBox>
+
+                    <GroupBox Grid.Row="2" Header="論理アイテム" Margin="0,0,0,8">
+                        <DataGrid ItemsSource="{Binding ScanLogicalItems}" AutoGenerateColumns="False"
+                                  CanUserAddRows="False" IsReadOnly="True">
+                            <DataGrid.RowStyle>
+                                <Style TargetType="DataGridRow">
+                                    <Style.Triggers>
+                                        <DataTrigger Binding="{Binding Code}" Value="Unclassified">
+                                            <Setter Property="Foreground" Value="Gray" />
+                                            <Setter Property="FontStyle" Value="Italic" />
+                                        </DataTrigger>
+                                    </Style.Triggers>
+                                </Style>
+                            </DataGrid.RowStyle>
+                            <DataGrid.Columns>
+                                <DataGridTextColumn Header="コード" Binding="{Binding Code}" Width="100" />
+                                <DataGridTextColumn Header="版数" Binding="{Binding Version}" Width="120" />
+                                <DataGridTextColumn Header="OS" Binding="{Binding Os}" Width="80" />
+                                <DataGridTextColumn Header="優先" Binding="{Binding PreferredAsset.FileName}" Width="200" />
+                                <DataGridTextColumn Header="Zip" Binding="{Binding PreferredAsset.IsZip}" Width="60" />
+                                <DataGridTextColumn Header="件数" Binding="{Binding Assets.Count}" Width="60" />
+                                <DataGridTextColumn Header="ソース" Binding="{Binding PreferredAsset.SourcePath}" Width="*" />
+                            </DataGrid.Columns>
+                        </DataGrid>
+                    </GroupBox>
+
+                    <GroupBox Grid.Row="3" Header="実体ファイル">
+                        <DataGrid ItemsSource="{Binding ScanAssets}" AutoGenerateColumns="False"
+                                  CanUserAddRows="False" IsReadOnly="True">
+                            <DataGrid.RowStyle>
+                                <Style TargetType="DataGridRow">
+                                    <Style.Triggers>
+                                        <DataTrigger Binding="{Binding Code}" Value="Unclassified">
+                                            <Setter Property="Foreground" Value="Gray" />
+                                            <Setter Property="FontStyle" Value="Italic" />
+                                        </DataTrigger>
+                                    </Style.Triggers>
+                                </Style>
+                            </DataGrid.RowStyle>
+                            <DataGrid.Columns>
+                                <DataGridTextColumn Header="コード" Binding="{Binding Code}" Width="100" />
+                                <DataGridTextColumn Header="版数" Binding="{Binding Version}" Width="120" />
+                                <DataGridTextColumn Header="OS" Binding="{Binding Os}" Width="80" />
+                                <DataGridTextColumn Header="Zip" Binding="{Binding IsZip}" Width="60" />
+                                <DataGridTextColumn Header="サイズ" Binding="{Binding Size}" Width="100" />
+                                <DataGridTextColumn Header="更新日時(UTC)" Binding="{Binding LastWriteTimeUtc}" Width="150" />
+                                <DataGridTextColumn Header="ソース" Binding="{Binding SourcePath}" Width="*" />
+                            </DataGrid.Columns>
+                        </DataGrid>
+                    </GroupBox>
+                </Grid>
+            </TabItem>
+
+            <TabItem Header="転送">
+                <Grid Margin="8">
+                    <Grid.RowDefinitions>
+                        <RowDefinition Height="Auto" />
+                        <RowDefinition Height="*" />
+                    </Grid.RowDefinitions>
+
+                    <StackPanel Orientation="Horizontal" Grid.Row="0" Margin="0,0,0,8">
+                        <TextBlock Text="全体進捗" Margin="0,0,6,0" />
+                        <TextBlock Text="{Binding TransferSummary.OverallProgressText}" Margin="0,0,12,0" />
+                        <TextBlock Text="残り" Margin="0,0,6,0" />
+                        <TextBlock Text="{Binding TransferSummary.RemainingCountText}" Margin="0,0,12,0" />
+                        <TextBlock Text="速度(MB/s)" Margin="0,0,6,0" />
+                        <TextBlock Text="{Binding TransferSummary.TotalSpeedText}" Margin="0,0,12,0" />
+                        <TextBlock Text="同時実行数" Margin="0,0,6,0" />
+                        <TextBox Text="{Binding MaxConcurrentTransfersInput, UpdateSourceTrigger=PropertyChanged}"
+                                 Width="50" Height="22" Margin="0,0,6,0" />
+                        <Button Content="変更" Command="{Binding ApplyMaxConcurrentTransfersCommand}" Margin="0,0,6,0" />
+                        <TextBlock Text="{Binding TransferSummary.ConcurrentText}" />
+                    </StackPanel>
+
+                    <DataGrid Grid.Row="1" ItemsSource="{Binding TransferItems}" AutoGenerateColumns="False" CanUserAddRows="False">
+                        <DataGrid.Columns>
+                            <DataGridTextColumn Header="状態" Binding="{Binding Status}" Width="100" />
+                            <DataGridTextColumn Header="会社名" Binding="{Binding Company}" Width="140" />
+                            <DataGridTextColumn Header="ファイル名" Binding="{Binding FileName}" Width="200" />
+                            <DataGridTemplateColumn Header="進捗" Width="140">
+                                <DataGridTemplateColumn.CellTemplate>
+                                    <DataTemplate>
+                                        <ProgressBar Value="{Binding ProgressPercent}" Height="16">
+                                            <ProgressBar.Style>
+                                                <Style TargetType="ProgressBar" BasedOn="{StaticResource {x:Type ProgressBar}}">
+                                                    <Style.Triggers>
+                                                        <DataTrigger Binding="{Binding Status}" Value="HashingSource">
+                                                            <Setter Property="Foreground" Value="#F2C94C" />
+                                                        </DataTrigger>
+                                                        <DataTrigger Binding="{Binding Status}" Value="Downloading">
+                                                            <Setter Property="Foreground" Value="#2ECC71" />
+                                                        </DataTrigger>
+                                                        <DataTrigger Binding="{Binding Status}" Value="Paused">
+                                                            <Setter Property="Foreground" Value="#4C9AFF" />
+                                                        </DataTrigger>
+                                                    </Style.Triggers>
+                                                </Style>
+                                            </ProgressBar.Style>
+                                        </ProgressBar>
+                                    </DataTemplate>
+                                </DataGridTemplateColumn.CellTemplate>
+                            </DataGridTemplateColumn>
+                            <DataGridTextColumn Header="転送量" Binding="{Binding BytesText}" Width="130" />
+                            <DataGridTextColumn Header="速度(MB/s)" Binding="{Binding SpeedText}" Width="90" />
+                            <DataGridTextColumn Header="開始" Binding="{Binding StartedAtText}" Width="130" />
+                            <DataGridTextColumn Header="予定時刻" Binding="{Binding EstimatedEndText}" Width="130" />
+                            <DataGridTextColumn Header="残り" Binding="{Binding RemainingText}" Width="90" />
+                            <DataGridTextColumn Header="元ハッシュ" Binding="{Binding SourceHashStatus}" Width="90" />
+                            <DataGridTextColumn Header="ローカルハッシュ" Binding="{Binding LocalHashStatus}" Width="110" />
+                            <DataGridTextColumn Header="検証" Binding="{Binding VerifyResultText}" Width="80" />
+                            <DataGridTextColumn Header="エラー" Binding="{Binding ErrorReason}" Width="140" />
+                            <DataGridTemplateColumn Header="操作" Width="220">
+                                <DataGridTemplateColumn.CellTemplate>
+                                    <DataTemplate>
+                                        <StackPanel Orientation="Horizontal">
+                                            <Button Content="一時停止" Command="{Binding PauseCommand}" Margin="0,0,4,0" />
+                                            <Button Content="再開" Command="{Binding ResumeCommand}" Margin="0,0,4,0" />
+                                            <Button Content="キャンセル" Command="{Binding CancelCommand}" Margin="0,0,4,0" />
+                                            <Button Content="再試行" Command="{Binding RetryCommand}" />
+                                        </StackPanel>
+                                    </DataTemplate>
+                                </DataGridTemplateColumn.CellTemplate>
+                            </DataGridTemplateColumn>
+                        </DataGrid.Columns>
+                    </DataGrid>
+                </Grid>
+            </TabItem>
+
+            <TabItem Header="履歴">
+                <Grid Margin="8">
+                    <Grid.RowDefinitions>
+                        <RowDefinition Height="Auto" />
+                        <RowDefinition Height="*" />
+                    </Grid.RowDefinitions>
+
+                    <StackPanel Orientation="Horizontal" Grid.Row="0" Margin="0,0,0,8">
+                        <Button Content="更新" Command="{Binding RefreshHistoryCommand}" Margin="0,0,8,0" />
+                        <Button Content="CSV出力" Command="{Binding ExportHistoryCommand}" />
+                    </StackPanel>
+
+                    <DataGrid Grid.Row="1" ItemsSource="{Binding HistoryItems}" AutoGenerateColumns="False" CanUserAddRows="False">
+                        <DataGrid.Columns>
+                            <DataGridTextColumn Header="実行日時" Binding="{Binding Timestamp}" Width="160" />
+                            <DataGridTextColumn Header="会社名" Binding="{Binding Company}" Width="140" />
+                            <DataGridTextColumn Header="Helix" Binding="{Binding HelixVersion}" Width="100" />
+                            <DataGridTextColumn Header="出力先" Binding="{Binding OutputRoot}" Width="240" />
+                            <DataGridTextColumn Header="メモ" Binding="{Binding Memo}" Width="*" />
+                            <DataGridTextColumn Header="件数" Binding="{Binding ItemCount}" Width="60" />
+                        </DataGrid.Columns>
+                    </DataGrid>
+                </Grid>
+            </TabItem>
+        </TabControl>
+    </Grid>
+</Window>
+

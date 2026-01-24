@@ -1,0 +1,6 @@
+﻿{
+  "ExcelPath": "C:\\PRQA\\PRQA対応表.xlsx",
+  "UncRoot": "\\\\fs\\S09-haken\\PRQA\\",
+  "OutputBaseFolder": "D:\\PRQA_Deliveries",
+  "MaxConcurrentTransfers": 2
+}

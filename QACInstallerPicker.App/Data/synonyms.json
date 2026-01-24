@@ -1,0 +1,13 @@
+﻿{
+  "MISRA C:2012": ["M3CM"],
+  "MISRA C:2004": ["M2CM"],
+  "MISRA C:1998": ["MCM"],
+  "MISRA C++": ["MCPP", "M2CPP"],
+  "CERT C": ["CERTCCM"],
+  "CERT C++": ["CERTCPPCM"],
+  "AUTOSAR": ["ASCM"],
+  "Validate": ["VALIDATE"],
+  "CWE": ["CWECCM", "CWECPPCM"],
+  "Dashboard": ["DASHBOARD"],
+  "DashBoad": ["DASHBOARD"]
+}

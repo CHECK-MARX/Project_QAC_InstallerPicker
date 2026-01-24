@@ -1,0 +1,39 @@
+# Build outputs
+bin/
+obj/
+artifacts/
+**/bin/
+**/obj/
+
+# User-specific files
+*.user
+*.userosscache
+*.suo
+*.userprefs
+*.rsuser
+*.sln.docstates
+
+# Visual Studio
+.vs/
+*.vcxproj.user
+*.vcproj.user
+*.dbmdl
+*.jfm
+*.cache
+*.cachefile
+*.log
+*.tlog
+*.pdb
+*.ilk
+
+# Visual Studio Code
+.vscode/
+
+# Rider/IDEA
+.idea/
+*.sln.iml
+
+# OS junk
+.DS_Store
+Thumbs.db
+ehthumbs.db
