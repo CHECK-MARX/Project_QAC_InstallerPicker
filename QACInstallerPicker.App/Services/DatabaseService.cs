@@ -223,7 +223,7 @@ ORDER BY b.timestamp_utc DESC;
         return items;
     }
 
-    public async Task<List<TransferItemRecord>> LoadPendingTransfersAsync()
+    public async Task<List<TransferItemRecord>> LoadTransferItemsAsync()
     {
         var items = new List<TransferItemRecord>();
         await using var connection = CreateConnection();
@@ -236,7 +236,7 @@ SELECT t.id, t.batch_id, t.logical_key, t.asset_source_path, t.dest_path, t.size
        b.company
 FROM transfer_items t
 LEFT JOIN batches b ON b.id = t.batch_id
-WHERE t.status IN ('Queued', 'HashingSource', 'Downloading', 'Verifying');
+ORDER BY t.id;
 ";
         await using var reader = await command.ExecuteReaderAsync();
         while (await reader.ReadAsync())
@@ -276,6 +276,24 @@ WHERE t.status IN ('Queued', 'HashingSource', 'Downloading', 'Verifying');
         }
 
         File.WriteAllText(path, sb.ToString(), Encoding.UTF8);
+    }
+
+    public async Task ClearHistoryAsync()
+    {
+        await using var connection = CreateConnection();
+        await connection.OpenAsync();
+        await using var transaction = connection.BeginTransaction();
+        var command = connection.CreateCommand();
+        command.Transaction = transaction;
+
+        command.CommandText = "DELETE FROM transfer_items;";
+        await command.ExecuteNonQueryAsync();
+        command.CommandText = "DELETE FROM batches;";
+        await command.ExecuteNonQueryAsync();
+        command.CommandText = "DELETE FROM hash_cache;";
+        await command.ExecuteNonQueryAsync();
+
+        await transaction.CommitAsync();
     }
 
     private static string Escape(string value)

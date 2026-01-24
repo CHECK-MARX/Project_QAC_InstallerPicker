@@ -235,7 +235,7 @@ public partial class MainViewModel : ObservableObject
             await ScanInstallersAsync();
         }
 
-        await LoadPendingTransfersAsync();
+        await LoadTransferItemsAsync();
         await RefreshHistoryAsync();
         TransferSummary.Update(TransferItems, MaxConcurrentTransfers);
     }
@@ -736,6 +736,40 @@ public partial class MainViewModel : ObservableObject
 
         await _databaseService.ExportHistoryCsvAsync(dialog.FileName);
         WpfMessageBox.Show("CSVを出力しました。", "Export", MessageBoxButton.OK, MessageBoxImage.Information);
+    }
+
+    [RelayCommand]
+    private async Task ClearHistoryAsync()
+    {
+        var hasActiveTransfers = TransferItems.Any(item =>
+            item.Record.Status is TransferStatus.Queued
+                or TransferStatus.HashingSource
+                or TransferStatus.Downloading
+                or TransferStatus.Verifying
+                or TransferStatus.Paused);
+        if (hasActiveTransfers)
+        {
+            WpfMessageBox.Show("進行中/待機中の転送があるため履歴を初期化できません。転送を停止・キャンセルしてから再実行してください。",
+                "初期化不可",
+                MessageBoxButton.OK,
+                MessageBoxImage.Warning);
+            return;
+        }
+
+        var result = WpfMessageBox.Show("履歴を初期化しますか？\n転送履歴とキャッシュが削除されます。",
+            "確認",
+            MessageBoxButton.YesNo,
+            MessageBoxImage.Warning);
+        if (result != MessageBoxResult.Yes)
+        {
+            return;
+        }
+
+        await _databaseService.ClearHistoryAsync();
+        HistoryItems.Clear();
+        TransferItems.Clear();
+        _transferManager = null;
+        TransferSummary.Update(TransferItems, MaxConcurrentTransfers);
     }
 
     private TransferManager TransferManager
@@ -2746,17 +2780,23 @@ public partial class MainViewModel : ObservableObject
         InstallerAsset? Asset,
         string Reason);
 
-    private async Task LoadPendingTransfersAsync()
+    private async Task LoadTransferItemsAsync()
     {
-        var pending = await _databaseService.LoadPendingTransfersAsync();
-        foreach (var record in pending)
+        var items = await _databaseService.LoadTransferItemsAsync();
+        foreach (var record in items)
         {
-            record.Status = TransferStatus.Paused;
+            if (record.Status is TransferStatus.Queued
+                or TransferStatus.HashingSource
+                or TransferStatus.Downloading
+                or TransferStatus.Verifying)
+            {
+                record.Status = TransferStatus.Paused;
+                await _databaseService.UpdateTransferItemAsync(record);
+            }
+
             var vm = new TransferItemViewModel(record, TransferManager);
-            vm.MarkPaused();
             vm.ProgressChanged += (_, _) => TransferSummary.Update(TransferItems, MaxConcurrentTransfers);
             TransferItems.Add(vm);
-            await _databaseService.UpdateTransferItemAsync(record);
         }
     }
 

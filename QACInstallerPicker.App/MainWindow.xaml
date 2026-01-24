@@ -404,7 +404,8 @@
 
                     <StackPanel Orientation="Horizontal" Grid.Row="0" Margin="0,0,0,8">
                         <Button Content="更新" Command="{Binding RefreshHistoryCommand}" Margin="0,0,8,0" />
-                        <Button Content="CSV出力" Command="{Binding ExportHistoryCommand}" />
+                        <Button Content="CSV出力" Command="{Binding ExportHistoryCommand}" Margin="0,0,8,0" />
+                        <Button Content="初期化" Command="{Binding ClearHistoryCommand}" />
                     </StackPanel>
 
                     <DataGrid Grid.Row="1" ItemsSource="{Binding HistoryItems}" AutoGenerateColumns="False" CanUserAddRows="False">
