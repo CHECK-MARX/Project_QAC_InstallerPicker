@@ -19,6 +19,7 @@ jobs:
         with:
           dotnet-version: "8.0.x"
           cache: true
+          cache-dependency-path: QACInstallerPicker.App/packages.lock.json
 
       - name: Restore
         run: dotnet restore Project_QACInstallerPicker.sln
