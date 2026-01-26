@@ -1,6 +1,7 @@
 ﻿using System;
 using System.Collections.Generic;
 using System.Collections.ObjectModel;
+using System.ComponentModel;
 using System.Diagnostics;
 using System.IO;
 using System.Linq;
@@ -35,6 +36,7 @@ public partial class MainViewModel : ObservableObject
     private Dictionary<string, List<string>> _synonyms = new(StringComparer.OrdinalIgnoreCase);
     private List<LogicalItem> _logicalItems = new();
     private readonly List<ManualPickEntry> _manualPicks = new();
+    private readonly Dictionary<long, TransferStatus> _transferStatusLookup = new();
     private bool _suppressSelectionSync;
     private static readonly Regex VersionRegex = new(@"\d+(?:\.\d+)+", RegexOptions.Compiled);
     private static readonly Regex VersionNumberRegex = new(@"\d+", RegexOptions.Compiled);
@@ -143,6 +145,7 @@ public partial class MainViewModel : ObservableObject
     public ObservableCollection<ScanSelectionItemViewModel> ScanSelectionItems { get; }
 
     public event EventHandler? RequestOpenSettings;
+    public event Action<string, string>? RequestNotification;
 
     [ObservableProperty]
     private SettingsModel _settings;
@@ -699,7 +702,7 @@ public partial class MainViewModel : ObservableObject
 
                 record.Id = await _databaseService.InsertTransferItemAsync(record);
                 var vm = new TransferItemViewModel(record, TransferManager);
-                vm.ProgressChanged += (_, _) => TransferSummary.Update(TransferItems, MaxConcurrentTransfers);
+                RegisterTransferItem(vm);
                 TransferItems.Add(vm);
                 await TransferManager.StartAsync(vm);
             }
@@ -827,6 +830,7 @@ public partial class MainViewModel : ObservableObject
         await _databaseService.ClearTransferHistoryAsync();
         foreach (var item in removable)
         {
+            UnregisterTransferItem(item);
             TransferItems.Remove(item);
         }
 
@@ -862,7 +866,13 @@ public partial class MainViewModel : ObservableObject
 
         await _databaseService.ClearHistoryAsync();
         HistoryItems.Clear();
+        foreach (var item in TransferItems.ToList())
+        {
+            UnregisterTransferItem(item);
+        }
+
         TransferItems.Clear();
+        _transferStatusLookup.Clear();
         _transferManager = null;
         TransferSummary.Update(TransferItems, MaxConcurrentTransfers);
     }
@@ -2875,6 +2885,58 @@ public partial class MainViewModel : ObservableObject
         InstallerAsset? Asset,
         string Reason);
 
+    private void RegisterTransferItem(TransferItemViewModel item)
+    {
+        _transferStatusLookup[item.Record.Id] = item.Status;
+        item.ProgressChanged += OnTransferItemProgressChanged;
+        item.PropertyChanged += OnTransferItemPropertyChanged;
+    }
+
+    private void UnregisterTransferItem(TransferItemViewModel item)
+    {
+        item.ProgressChanged -= OnTransferItemProgressChanged;
+        item.PropertyChanged -= OnTransferItemPropertyChanged;
+        _transferStatusLookup.Remove(item.Record.Id);
+    }
+
+    private void OnTransferItemProgressChanged(object? sender, EventArgs e)
+    {
+        TransferSummary.Update(TransferItems, MaxConcurrentTransfers);
+    }
+
+    private void OnTransferItemPropertyChanged(object? sender, PropertyChangedEventArgs e)
+    {
+        if (sender is not TransferItemViewModel item)
+        {
+            return;
+        }
+
+        if (!string.Equals(e.PropertyName, nameof(TransferItemViewModel.Status), StringComparison.Ordinal))
+        {
+            return;
+        }
+
+        var previous = _transferStatusLookup.TryGetValue(item.Record.Id, out var cached)
+            ? cached
+            : item.Status;
+
+        if (previous != TransferStatus.Completed && item.Status == TransferStatus.Completed)
+        {
+            NotifyTransferCompleted(item);
+        }
+
+        _transferStatusLookup[item.Record.Id] = item.Status;
+    }
+
+    private void NotifyTransferCompleted(TransferItemViewModel item)
+    {
+        var title = "ダウンロード完了";
+        var message = string.IsNullOrWhiteSpace(item.Company)
+            ? item.FileName
+            : $"{item.Company}\n{item.FileName}";
+        RequestNotification?.Invoke(title, message);
+    }
+
     private async Task LoadTransferItemsAsync()
     {
         var items = await _databaseService.LoadTransferItemsAsync();
@@ -2890,7 +2952,7 @@ public partial class MainViewModel : ObservableObject
             }
 
             var vm = new TransferItemViewModel(record, TransferManager);
-            vm.ProgressChanged += (_, _) => TransferSummary.Update(TransferItems, MaxConcurrentTransfers);
+            RegisterTransferItem(vm);
             TransferItems.Add(vm);
         }
     }
