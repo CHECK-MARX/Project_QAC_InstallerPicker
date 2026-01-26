@@ -100,14 +100,37 @@
                                                 </DataGridTextColumn.ElementStyle>
                                             </DataGridTextColumn>
                                             <DataGridTextColumn Header="名称" Binding="{Binding Name}" Width="220" />
-                                            <DataGridTextColumn Header="対応表版数" Binding="{Binding ModuleVersionDisplay}" Width="160" />
-                                            <DataGridTemplateColumn Header="選択版数" Width="120">
+                                            <DataGridTemplateColumn Header="対応表版数" Width="160">
                                                 <DataGridTemplateColumn.CellTemplate>
                                                     <DataTemplate>
-                                                        <ComboBox ItemsSource="{Binding InstallerVersionOptions}"
-                                                                  SelectedItem="{Binding SelectedInstallerVersion, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}"
-                                                                  Visibility="{Binding HasInstallerVersionOptions, Converter={StaticResource BoolToVis}}"
-                                                                  MinWidth="100" />
+                                                        <Grid>
+                                                            <TextBlock Text="{Binding ModuleVersionDisplay}" VerticalAlignment="Center">
+                                                                <TextBlock.Style>
+                                                                    <Style TargetType="TextBlock">
+                                                                        <Setter Property="Visibility" Value="Visible" />
+                                                                        <Style.Triggers>
+                                                                            <DataTrigger Binding="{Binding HasInstallerVersionOptions}" Value="True">
+                                                                                <Setter Property="Visibility" Value="Collapsed" />
+                                                                            </DataTrigger>
+                                                                        </Style.Triggers>
+                                                                    </Style>
+                                                                </TextBlock.Style>
+                                                            </TextBlock>
+                                                            <ComboBox ItemsSource="{Binding InstallerVersionOptions}"
+                                                                      SelectedItem="{Binding SelectedInstallerVersion, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}"
+                                                                      MinWidth="100">
+                                                                <ComboBox.Style>
+                                                                    <Style TargetType="ComboBox">
+                                                                        <Setter Property="Visibility" Value="Collapsed" />
+                                                                        <Style.Triggers>
+                                                                            <DataTrigger Binding="{Binding HasInstallerVersionOptions}" Value="True">
+                                                                                <Setter Property="Visibility" Value="Visible" />
+                                                                            </DataTrigger>
+                                                                        </Style.Triggers>
+                                                                    </Style>
+                                                                </ComboBox.Style>
+                                                            </ComboBox>
+                                                        </Grid>
                                                     </DataTemplate>
                                                 </DataGridTemplateColumn.CellTemplate>
                                             </DataGridTemplateColumn>
@@ -159,7 +182,6 @@
                                     <DataGridTextColumn Header="実ファイル版数" Binding="{Binding InstallerVersion}" Width="110" />
                                     <DataGridTextColumn Header="OS" Binding="{Binding Os}" Width="70" />
                                     <DataGridTextColumn Header="ファイル" Binding="{Binding AssetFileName}" Width="*" />
-                                    <DataGridTextColumn Header="理由" Binding="{Binding Reason}" Width="120" />
                                     <DataGridTemplateColumn Header="解除" Width="70">
                                         <DataGridTemplateColumn.CellTemplate>
                                             <DataTemplate>
