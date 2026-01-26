@@ -950,9 +950,11 @@ public partial class MainViewModel : ObservableObject
                         : null;
                 var supported = supportInfo?.IsSupported ?? ExtraModuleCodes.Contains(code);
                 var moduleVersion = supportInfo?.ModuleVersion ?? string.Empty;
+                var moduleVersionDisplay = moduleVersion;
                 if (code.Equals(HelixQacCode, StringComparison.OrdinalIgnoreCase))
                 {
                     moduleVersion = helix.Version;
+                    moduleVersionDisplay = BuildHelixQacModuleVersionDisplay(helix, moduleVersion);
                 }
                 var name = ModuleCatalog.GetDescription(code);
                 var isEnabled = supported;
@@ -979,7 +981,8 @@ public partial class MainViewModel : ObservableObject
                     reason,
                     aliases,
                     selectionGroupKey,
-                    isSelectionLeader);
+                    isSelectionLeader,
+                    moduleVersionDisplay);
                 modules.Add(moduleVm);
             }
 
@@ -1320,6 +1323,39 @@ public partial class MainViewModel : ObservableObject
             if (helix.ModuleSupport.TryGetValue(code, out var info))
             {
                 return info;
+            }
+        }
+
+        return null;
+    }
+
+    private static string BuildHelixQacModuleVersionDisplay(HelixVersionData helix, string fallbackVersion)
+    {
+        var qacVersion = TryGetModuleVersion(helix, "QAC");
+        var qacppVersion = TryGetModuleVersion(helix, "QAC++", "QACPP");
+        var parts = new List<string>(2);
+
+        if (!string.IsNullOrWhiteSpace(qacVersion))
+        {
+            parts.Add($"QAC({qacVersion})");
+        }
+
+        if (!string.IsNullOrWhiteSpace(qacppVersion))
+        {
+            parts.Add($"QAC++({qacppVersion})");
+        }
+
+        return parts.Count > 0 ? string.Join(" ", parts) : fallbackVersion;
+    }
+
+    private static string? TryGetModuleVersion(HelixVersionData helix, params string[] codes)
+    {
+        foreach (var code in codes)
+        {
+            if (helix.ModuleSupport.TryGetValue(code, out var info) &&
+                !string.IsNullOrWhiteSpace(info.ModuleVersion))
+            {
+                return info.ModuleVersion;
             }
         }
 

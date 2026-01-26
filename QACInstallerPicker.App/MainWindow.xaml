@@ -100,7 +100,7 @@
                                                 </DataGridTextColumn.ElementStyle>
                                             </DataGridTextColumn>
                                             <DataGridTextColumn Header="名称" Binding="{Binding Name}" Width="220" />
-                                            <DataGridTextColumn Header="対応表版数" Binding="{Binding ModuleVersion}" Width="120" />
+                                            <DataGridTextColumn Header="対応表版数" Binding="{Binding ModuleVersionDisplay}" Width="160" />
                                             <DataGridTemplateColumn Header="選択版数" Width="120">
                                                 <DataGridTemplateColumn.CellTemplate>
                                                     <DataTemplate>

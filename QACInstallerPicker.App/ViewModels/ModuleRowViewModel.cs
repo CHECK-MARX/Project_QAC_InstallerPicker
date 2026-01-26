@@ -55,11 +55,13 @@ public partial class ModuleRowViewModel : ObservableObject
         string? disabledReason,
         List<string>? aliases = null,
         string? selectionGroupKey = null,
-        bool isSelectionLeader = true)
+        bool isSelectionLeader = true,
+        string? moduleVersionDisplay = null)
     {
         Code = code;
         Name = name;
         ModuleVersion = moduleVersion ?? string.Empty;
+        ModuleVersionDisplay = string.IsNullOrWhiteSpace(moduleVersionDisplay) ? ModuleVersion : moduleVersionDisplay;
         IsSupported = isSupported;
         _baseIsEnabled = isEnabled;
         _baseDisabledReason = disabledReason ?? string.Empty;
@@ -80,6 +82,7 @@ public partial class ModuleRowViewModel : ObservableObject
     public string Code { get; }
     public string Name { get; }
     public string ModuleVersion { get; }
+    public string ModuleVersionDisplay { get; }
     public bool IsSupported { get; }
     [ObservableProperty]
     private bool _isEnabled;
