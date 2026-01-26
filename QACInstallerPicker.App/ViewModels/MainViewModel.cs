@@ -5,6 +5,7 @@ using System.ComponentModel;
 using System.Diagnostics;
 using System.IO;
 using System.Linq;
+using System.Reflection;
 using System.Text;
 using System.Text.Json;
 using System.Text.RegularExpressions;
@@ -216,6 +217,23 @@ public partial class MainViewModel : ObservableObject
         {
             return $"対応表: {Settings.ExcelPath} | 共有: {Settings.UncRoot}";
         }
+    }
+
+    public string AppTitle => $"QAC インストーラ選定ツール v{AppVersion}";
+
+    private static string AppVersion => GetAppVersion();
+
+    private static string GetAppVersion()
+    {
+        var assembly = typeof(MainViewModel).Assembly;
+        var info = assembly.GetCustomAttribute<AssemblyInformationalVersionAttribute>()?.InformationalVersion;
+        if (!string.IsNullOrWhiteSpace(info))
+        {
+            return info;
+        }
+
+        var version = assembly.GetName().Version;
+        return version?.ToString() ?? "0.0.0";
     }
 
     public async Task InitializeAsync()

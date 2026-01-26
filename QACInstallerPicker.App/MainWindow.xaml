@@ -5,7 +5,7 @@
         xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
         xmlns:local="clr-namespace:QACInstallerPicker.App"
         mc:Ignorable="d"
-        Title="QAC インストーラ選定ツール" Height="900" Width="1300">
+        Title="{Binding AppTitle}" Height="900" Width="1300">
     <Window.Resources>
         <BooleanToVisibilityConverter x:Key="BoolToVis" />
     </Window.Resources>
