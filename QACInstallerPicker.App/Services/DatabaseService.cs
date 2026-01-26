@@ -44,6 +44,7 @@ CREATE TABLE IF NOT EXISTS batches (
 CREATE TABLE IF NOT EXISTS transfer_items (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     batch_id INTEGER,
+    company TEXT,
     logical_key TEXT,
     asset_source_path TEXT,
     dest_path TEXT,
@@ -68,6 +69,22 @@ CREATE TABLE IF NOT EXISTS hash_cache (
 );
 ";
         await command.ExecuteNonQueryAsync();
+
+        if (!await ColumnExistsAsync(connection, "batches", "is_hidden"))
+        {
+            var alterCommand = connection.CreateCommand();
+            alterCommand.CommandText = "ALTER TABLE batches ADD COLUMN is_hidden INTEGER NOT NULL DEFAULT 0;";
+            await alterCommand.ExecuteNonQueryAsync();
+        }
+
+        if (!await ColumnExistsAsync(connection, "transfer_items", "company"))
+        {
+            var alterCommand = connection.CreateCommand();
+            alterCommand.CommandText = "ALTER TABLE transfer_items ADD COLUMN company TEXT;";
+            await alterCommand.ExecuteNonQueryAsync();
+        }
+
+        await BackfillTransferItemCompaniesAsync(connection);
     }
 
     public async Task<long> InsertBatchAsync(TransferBatch batch)
@@ -98,16 +115,17 @@ SELECT last_insert_rowid();
         var command = connection.CreateCommand();
         command.CommandText = @"
 INSERT INTO transfer_items (
-    batch_id, logical_key, asset_source_path, dest_path, size, status,
+    batch_id, company, logical_key, asset_source_path, dest_path, size, status,
     started_at_utc, completed_at_utc, bytes_copied, source_last_write_time_utc,
     source_hash_sha256, dest_hash_sha256, verify_result, error_reason)
 VALUES (
-    $batch, $logical, $source, $dest, $size, $status,
+    $batch, $company, $logical, $source, $dest, $size, $status,
     $started, $completed, $bytes, $source_lwt,
     $source_hash, $dest_hash, $verify, $error);
 SELECT last_insert_rowid();
 ";
         command.Parameters.AddWithValue("$batch", item.BatchId);
+        command.Parameters.AddWithValue("$company", item.Company);
         command.Parameters.AddWithValue("$logical", item.LogicalKey);
         command.Parameters.AddWithValue("$source", item.AssetSourcePath);
         command.Parameters.AddWithValue("$dest", item.DestPath);
@@ -204,6 +222,7 @@ SELECT b.id, b.timestamp_utc, b.company, b.helix_version, b.output_root, b.memo,
        COUNT(t.id) AS item_count
 FROM batches b
 LEFT JOIN transfer_items t ON t.batch_id = b.id
+WHERE COALESCE(b.is_hidden, 0) = 0
 GROUP BY b.id
 ORDER BY b.timestamp_utc DESC;
 ";
@@ -242,7 +261,7 @@ ORDER BY b.timestamp_utc DESC;
 SELECT t.id, t.batch_id, t.logical_key, t.asset_source_path, t.dest_path, t.size, t.status,
        t.started_at_utc, t.completed_at_utc, t.bytes_copied, t.source_last_write_time_utc,
        t.source_hash_sha256, t.dest_hash_sha256, t.verify_result, t.error_reason,
-       b.company
+       COALESCE(t.company, b.company) AS company
 FROM transfer_items t
 LEFT JOIN batches b ON b.id = t.batch_id
 ORDER BY t.id;
@@ -299,22 +318,36 @@ WHERE status IN ('Completed', 'Failed', 'Canceled');
         await command.ExecuteNonQueryAsync();
     }
 
+    public async Task DeleteHistoryBatchesAsync(IReadOnlyCollection<long> batchIds)
+    {
+        if (batchIds.Count == 0)
+        {
+            return;
+        }
+
+        await using var connection = CreateConnection();
+        await connection.OpenAsync();
+        var command = connection.CreateCommand();
+        var parameters = new List<string>();
+        var index = 0;
+        foreach (var id in batchIds)
+        {
+            var name = $"$id{index++}";
+            parameters.Add(name);
+            command.Parameters.AddWithValue(name, id);
+        }
+
+        command.CommandText = $"DELETE FROM batches WHERE id IN ({string.Join(", ", parameters)});";
+        await command.ExecuteNonQueryAsync();
+    }
+
     public async Task ClearHistoryAsync()
     {
         await using var connection = CreateConnection();
         await connection.OpenAsync();
-        await using var transaction = connection.BeginTransaction();
         var command = connection.CreateCommand();
-        command.Transaction = transaction;
-
-        command.CommandText = "DELETE FROM transfer_items;";
-        await command.ExecuteNonQueryAsync();
         command.CommandText = "DELETE FROM batches;";
         await command.ExecuteNonQueryAsync();
-        command.CommandText = "DELETE FROM hash_cache;";
-        await command.ExecuteNonQueryAsync();
-
-        await transaction.CommitAsync();
     }
 
     private static string Escape(string value)
@@ -347,5 +380,32 @@ WHERE status IN ('Completed', 'Failed', 'Canceled');
             DataSource = _dbPath
         };
         return new SqliteConnection(builder.ToString());
+    }
+
+    private static async Task BackfillTransferItemCompaniesAsync(SqliteConnection connection)
+    {
+        var command = connection.CreateCommand();
+        command.CommandText = @"
+UPDATE transfer_items
+SET company = COALESCE(company, (SELECT company FROM batches WHERE batches.id = transfer_items.batch_id))
+WHERE company IS NULL OR company = '';
+";
+        await command.ExecuteNonQueryAsync();
+    }
+
+    private static async Task<bool> ColumnExistsAsync(SqliteConnection connection, string table, string column)
+    {
+        var command = connection.CreateCommand();
+        command.CommandText = $"PRAGMA table_info({table});";
+        await using var reader = await command.ExecuteReaderAsync();
+        while (await reader.ReadAsync())
+        {
+            if (string.Equals(reader.GetString(1), column, StringComparison.OrdinalIgnoreCase))
+            {
+                return true;
+            }
+        }
+
+        return false;
     }
 }

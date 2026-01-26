@@ -24,4 +24,7 @@ public partial class HistoryItemViewModel : ObservableObject
     public string OutputRoot { get; }
     public string Memo { get; }
     public int ItemCount { get; }
+
+    [ObservableProperty]
+    private bool _isSelected;
 }

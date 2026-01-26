@@ -725,6 +725,15 @@ public partial class MainViewModel : ObservableObject
     }
 
     [RelayCommand]
+    private void SelectAllHistory()
+    {
+        foreach (var item in HistoryItems)
+        {
+            item.IsSelected = true;
+        }
+    }
+
+    [RelayCommand]
     private async Task ExportHistoryAsync()
     {
         var dialog = new Win32.SaveFileDialog
@@ -785,13 +794,13 @@ public partial class MainViewModel : ObservableObject
             return;
         }
 
-        if (!Directory.Exists(path))
+        if (!Directory.Exists(path) && !File.Exists(path))
         {
-            WpfMessageBox.Show($"フォルダが見つかりません: {path}", "情報", MessageBoxButton.OK, MessageBoxImage.Information);
+            WpfMessageBox.Show($"対象が見つかりません: {path}", "情報", MessageBoxButton.OK, MessageBoxImage.Information);
             return;
         }
 
-        var result = WpfMessageBox.Show($"フォルダを削除しますか？\n{path}", "確認", MessageBoxButton.YesNo, MessageBoxImage.Warning);
+        var result = WpfMessageBox.Show($"ディレクトリを削除しますか？\n{path}", "確認", MessageBoxButton.YesNo, MessageBoxImage.Warning);
         if (result != MessageBoxResult.Yes)
         {
             return;
@@ -799,11 +808,38 @@ public partial class MainViewModel : ObservableObject
 
         try
         {
-            Directory.Delete(path, true);
+            DeletePathRecursively(path);
         }
         catch (Exception ex)
         {
-            WpfMessageBox.Show($"フォルダの削除に失敗しました: {ex.Message}", "Error", MessageBoxButton.OK, MessageBoxImage.Error);
+            WpfMessageBox.Show($"削除に失敗しました: {ex.Message}", "Error", MessageBoxButton.OK, MessageBoxImage.Error);
+        }
+    }
+
+    private static void DeletePathRecursively(string path)
+    {
+        if (Directory.Exists(path))
+        {
+            var directory = new DirectoryInfo(path);
+            NormalizeAttributes(directory);
+            directory.Delete(true);
+            return;
+        }
+
+        if (File.Exists(path))
+        {
+            var file = new FileInfo(path);
+            file.Attributes = FileAttributes.Normal;
+            file.Delete();
+        }
+    }
+
+    private static void NormalizeAttributes(DirectoryInfo directory)
+    {
+        directory.Attributes = FileAttributes.Normal;
+        foreach (var entry in directory.GetFileSystemInfos("*", SearchOption.AllDirectories))
+        {
+            entry.Attributes = FileAttributes.Normal;
         }
     }
 
@@ -840,22 +876,14 @@ public partial class MainViewModel : ObservableObject
     [RelayCommand]
     private async Task ClearHistoryAsync()
     {
-        var hasActiveTransfers = TransferItems.Any(item =>
-            item.Record.Status is TransferStatus.Queued
-                or TransferStatus.HashingSource
-                or TransferStatus.Downloading
-                or TransferStatus.Verifying
-                or TransferStatus.Paused);
-        if (hasActiveTransfers)
+        var selected = HistoryItems.Where(item => item.IsSelected).ToList();
+        if (selected.Count == 0)
         {
-            WpfMessageBox.Show("進行中/待機中の転送があるため履歴を初期化できません。転送を停止・キャンセルしてから再実行してください。",
-                "初期化不可",
-                MessageBoxButton.OK,
-                MessageBoxImage.Warning);
+            WpfMessageBox.Show("削除する履歴を選択してください。", "情報", MessageBoxButton.OK, MessageBoxImage.Information);
             return;
         }
 
-        var result = WpfMessageBox.Show("履歴を初期化しますか？\n転送履歴とキャッシュが削除されます。",
+        var result = WpfMessageBox.Show($"選択した {selected.Count} 件の履歴を削除しますか？",
             "確認",
             MessageBoxButton.YesNo,
             MessageBoxImage.Warning);
@@ -864,17 +892,11 @@ public partial class MainViewModel : ObservableObject
             return;
         }
 
-        await _databaseService.ClearHistoryAsync();
-        HistoryItems.Clear();
-        foreach (var item in TransferItems.ToList())
+        await _databaseService.DeleteHistoryBatchesAsync(selected.Select(item => item.BatchId).ToList());
+        foreach (var item in selected)
         {
-            UnregisterTransferItem(item);
+            HistoryItems.Remove(item);
         }
-
-        TransferItems.Clear();
-        _transferStatusLookup.Clear();
-        _transferManager = null;
-        TransferSummary.Update(TransferItems, MaxConcurrentTransfers);
     }
 
     private TransferManager TransferManager

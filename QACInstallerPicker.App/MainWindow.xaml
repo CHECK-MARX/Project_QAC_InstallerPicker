@@ -406,11 +406,20 @@
                     <StackPanel Orientation="Horizontal" Grid.Row="0" Margin="0,0,0,8">
                         <Button Content="更新" Command="{Binding RefreshHistoryCommand}" Margin="0,0,8,0" />
                         <Button Content="CSV出力" Command="{Binding ExportHistoryCommand}" Margin="0,0,8,0" />
-                        <Button Content="初期化" Command="{Binding ClearHistoryCommand}" />
+                        <Button Content="全選択" Command="{Binding SelectAllHistoryCommand}" Margin="0,0,8,0" />
+                        <Button Content="選択削除" Command="{Binding ClearHistoryCommand}" />
                     </StackPanel>
 
                     <DataGrid Grid.Row="1" ItemsSource="{Binding HistoryItems}" AutoGenerateColumns="False" CanUserAddRows="False">
                         <DataGrid.Columns>
+                            <DataGridTemplateColumn Header="選択" Width="60">
+                                <DataGridTemplateColumn.CellTemplate>
+                                    <DataTemplate>
+                                        <CheckBox IsChecked="{Binding IsSelected, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}"
+                                                  HorizontalAlignment="Center" />
+                                    </DataTemplate>
+                                </DataGridTemplateColumn.CellTemplate>
+                            </DataGridTemplateColumn>
                             <DataGridTextColumn Header="実行日時" Binding="{Binding Timestamp}" Width="160" />
                             <DataGridTextColumn Header="会社名" Binding="{Binding Company}" Width="140" />
                             <DataGridTextColumn Header="Helix" Binding="{Binding HelixVersion}" Width="100" />
