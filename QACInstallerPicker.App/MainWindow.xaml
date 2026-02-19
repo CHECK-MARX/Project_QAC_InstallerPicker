@@ -58,99 +58,181 @@
                             <Button Content="全選択" Command="{Binding SelectAllModulesCommand}" Margin="0,0,6,0" />
                             <Button Content="全解除" Command="{Binding ClearModuleSelectionCommand}" />
                         </StackPanel>
-                        <TabControl ItemsSource="{Binding HelixVersions}"
-                                    SelectedItem="{Binding SelectedVersion}">
-                            <TabControl.ItemTemplate>
-                                <DataTemplate>
-                                    <TextBlock Text="{Binding Version}" />
-                                </DataTemplate>
-                            </TabControl.ItemTemplate>
-                            <TabControl.ContentTemplate>
-                                <DataTemplate>
-                                    <DataGrid ItemsSource="{Binding ModulesView}" AutoGenerateColumns="False"
-                                              CanUserAddRows="False" IsReadOnly="False" HeadersVisibility="Column"
-                                              SelectionMode="Single" Margin="0,8,8,0">
-                                        <DataGrid.RowStyle>
-                                            <Style TargetType="DataGridRow">
-                                                <Setter Property="IsEnabled" Value="{Binding IsEnabled}" />
-                                                <Setter Property="ToolTip" Value="{Binding DisabledReason}" />
-                                                <Style.Triggers>
-                                                    <Trigger Property="IsEnabled" Value="False">
-                                                        <Setter Property="Foreground" Value="Gray" />
-                                                    </Trigger>
-                                                </Style.Triggers>
-                                            </Style>
-                                        </DataGrid.RowStyle>
-                                        <DataGrid.Columns>
-                                            <DataGridTemplateColumn Header="選択" Width="60">
-                                                <DataGridTemplateColumn.CellTemplate>
-                                                    <DataTemplate>
-                                                        <CheckBox IsChecked="{Binding IsSelected, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}"
-                                                                  IsEnabled="{Binding IsEnabled}"
-                                                                  Visibility="{Binding IsSelectionVisible, Converter={StaticResource BoolToVis}}"
-                                                                  HorizontalAlignment="Center" />
-                                                    </DataTemplate>
-                                                </DataGridTemplateColumn.CellTemplate>
-                                            </DataGridTemplateColumn>
-                                            <DataGridTextColumn Header="コード" Binding="{Binding Code}" Width="100">
-                                                <DataGridTextColumn.ElementStyle>
-                                                    <Style TargetType="TextBlock">
-                                                        <Setter Property="ToolTip" Value="{Binding Name}" />
-                                                    </Style>
-                                                </DataGridTextColumn.ElementStyle>
-                                            </DataGridTextColumn>
-                                            <DataGridTextColumn Header="名称" Binding="{Binding Name}" Width="220" />
-                                            <DataGridTemplateColumn Header="対応表版数" Width="160">
-                                                <DataGridTemplateColumn.CellTemplate>
-                                                    <DataTemplate>
-                                                        <Grid>
-                                                            <TextBlock Text="{Binding ModuleVersionDisplay}" VerticalAlignment="Center">
-                                                                <TextBlock.Style>
-                                                                    <Style TargetType="TextBlock">
-                                                                        <Setter Property="Visibility" Value="Visible" />
-                                                                        <Style.Triggers>
-                                                                            <DataTrigger Binding="{Binding HasInstallerVersionOptions}" Value="True">
-                                                                                <Setter Property="Visibility" Value="Collapsed" />
-                                                                            </DataTrigger>
-                                                                        </Style.Triggers>
-                                                                    </Style>
-                                                                </TextBlock.Style>
-                                                            </TextBlock>
-                                                            <ComboBox ItemsSource="{Binding InstallerVersionOptions}"
-                                                                      SelectedItem="{Binding SelectedInstallerVersion, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}"
-                                                                      MinWidth="100">
-                                                                <ComboBox.Style>
-                                                                    <Style TargetType="ComboBox">
-                                                                        <Setter Property="Visibility" Value="Collapsed" />
-                                                                        <Style.Triggers>
-                                                                            <DataTrigger Binding="{Binding HasInstallerVersionOptions}" Value="True">
-                                                                                <Setter Property="Visibility" Value="Visible" />
-                                                                            </DataTrigger>
-                                                                        </Style.Triggers>
-                                                                    </Style>
-                                                                </ComboBox.Style>
-                                                            </ComboBox>
-                                                        </Grid>
-                                                    </DataTemplate>
-                                                </DataGridTemplateColumn.CellTemplate>
-                                            </DataGridTemplateColumn>
-                                            <DataGridTextColumn Header="対応OS" Binding="{Binding OsDisplay}" Width="100" />
-                                            <DataGridTemplateColumn Header="選択OS" Width="90">
-                                                <DataGridTemplateColumn.CellTemplate>
-                                                    <DataTemplate>
-                                                        <ComboBox ItemsSource="{Binding OsSelectionOptions}"
-                                                                  SelectedItem="{Binding OsSelection, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}"
-                                                                  ToolTip="{Binding OsDisplay}"
-                                                                  MinWidth="80" />
-                                                    </DataTemplate>
-                                                </DataGridTemplateColumn.CellTemplate>
-                                            </DataGridTemplateColumn>
-                                            <DataGridTextColumn Header="対応" Binding="{Binding SupportText}" Width="120" />
-                                        </DataGrid.Columns>
-                                    </DataGrid>
-                                </DataTemplate>
-                            </TabControl.ContentTemplate>
-                        </TabControl>
+
+                        <Grid>
+                            <Grid.RowDefinitions>
+                                <RowDefinition Height="2*" />
+                                <RowDefinition Height="1*" />
+                            </Grid.RowDefinitions>
+
+                            <TabControl Grid.Row="0" ItemsSource="{Binding HelixVersions}"
+                                        SelectedItem="{Binding SelectedVersion}" Margin="0,0,8,8">
+                                <TabControl.ItemTemplate>
+                                    <DataTemplate>
+                                        <TextBlock Text="{Binding Version}" />
+                                    </DataTemplate>
+                                </TabControl.ItemTemplate>
+                                <TabControl.ContentTemplate>
+                                    <DataTemplate>
+                                        <DataGrid ItemsSource="{Binding ModulesView}" AutoGenerateColumns="False"
+                                                  CanUserAddRows="False" IsReadOnly="False" HeadersVisibility="Column"
+                                                  SelectionMode="Single" Margin="0,8,0,0">
+                                            <DataGrid.RowStyle>
+                                                <Style TargetType="DataGridRow">
+                                                    <Setter Property="IsEnabled" Value="{Binding IsEnabled}" />
+                                                    <Setter Property="ToolTip" Value="{Binding DisabledReason}" />
+                                                    <Style.Triggers>
+                                                        <Trigger Property="IsEnabled" Value="False">
+                                                            <Setter Property="Foreground" Value="Gray" />
+                                                        </Trigger>
+                                                    </Style.Triggers>
+                                                </Style>
+                                            </DataGrid.RowStyle>
+                                            <DataGrid.Columns>
+                                                <DataGridTemplateColumn Header="選択" Width="60">
+                                                    <DataGridTemplateColumn.CellTemplate>
+                                                        <DataTemplate>
+                                                            <CheckBox IsChecked="{Binding IsSelected, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}"
+                                                                      IsEnabled="{Binding IsEnabled}"
+                                                                      Visibility="{Binding IsSelectionVisible, Converter={StaticResource BoolToVis}}"
+                                                                      HorizontalAlignment="Center" />
+                                                        </DataTemplate>
+                                                    </DataGridTemplateColumn.CellTemplate>
+                                                </DataGridTemplateColumn>
+                                                <DataGridTextColumn Header="コード" Binding="{Binding Code}" Width="100">
+                                                    <DataGridTextColumn.ElementStyle>
+                                                        <Style TargetType="TextBlock">
+                                                            <Setter Property="ToolTip" Value="{Binding Name}" />
+                                                        </Style>
+                                                    </DataGridTextColumn.ElementStyle>
+                                                </DataGridTextColumn>
+                                                <DataGridTextColumn Header="名称" Binding="{Binding Name}" Width="220" />
+                                                <DataGridTemplateColumn Header="対応表版数" Width="160">
+                                                    <DataGridTemplateColumn.CellTemplate>
+                                                        <DataTemplate>
+                                                            <Grid>
+                                                                <TextBlock Text="{Binding ModuleVersionDisplay}" VerticalAlignment="Center">
+                                                                    <TextBlock.Style>
+                                                                        <Style TargetType="TextBlock">
+                                                                            <Setter Property="Visibility" Value="Visible" />
+                                                                            <Style.Triggers>
+                                                                                <DataTrigger Binding="{Binding HasInstallerVersionOptions}" Value="True">
+                                                                                    <Setter Property="Visibility" Value="Collapsed" />
+                                                                                </DataTrigger>
+                                                                            </Style.Triggers>
+                                                                        </Style>
+                                                                    </TextBlock.Style>
+                                                                </TextBlock>
+                                                                <ComboBox ItemsSource="{Binding InstallerVersionOptions}"
+                                                                          SelectedItem="{Binding SelectedInstallerVersion, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}"
+                                                                          MinWidth="100">
+                                                                    <ComboBox.Style>
+                                                                        <Style TargetType="ComboBox">
+                                                                            <Setter Property="Visibility" Value="Collapsed" />
+                                                                            <Style.Triggers>
+                                                                                <DataTrigger Binding="{Binding HasInstallerVersionOptions}" Value="True">
+                                                                                    <Setter Property="Visibility" Value="Visible" />
+                                                                                </DataTrigger>
+                                                                            </Style.Triggers>
+                                                                        </Style>
+                                                                    </ComboBox.Style>
+                                                                </ComboBox>
+                                                            </Grid>
+                                                        </DataTemplate>
+                                                    </DataGridTemplateColumn.CellTemplate>
+                                                </DataGridTemplateColumn>
+                                                <DataGridTextColumn Header="対応OS" Binding="{Binding OsDisplay}" Width="100" />
+                                                <DataGridTemplateColumn Header="選択OS" Width="90">
+                                                    <DataGridTemplateColumn.CellTemplate>
+                                                        <DataTemplate>
+                                                            <ComboBox ItemsSource="{Binding OsSelectionOptions}"
+                                                                      SelectedItem="{Binding OsSelection, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}"
+                                                                      ToolTip="{Binding OsDisplay}"
+                                                                      MinWidth="80" />
+                                                        </DataTemplate>
+                                                    </DataGridTemplateColumn.CellTemplate>
+                                                </DataGridTemplateColumn>
+                                                <DataGridTextColumn Header="対応" Binding="{Binding SupportText}" Width="120" />
+                                            </DataGrid.Columns>
+                                        </DataGrid>
+                                    </DataTemplate>
+                                </TabControl.ContentTemplate>
+                            </TabControl>
+
+                            <GroupBox Grid.Row="1" Header="カスタム選定タブ" Margin="0,0,8,0">
+                                <Grid>
+                                    <Grid.RowDefinitions>
+                                        <RowDefinition Height="Auto" />
+                                        <RowDefinition Height="*" />
+                                    </Grid.RowDefinitions>
+
+                                    <StackPanel Grid.Row="0" Orientation="Horizontal" Margin="0,0,0,6">
+                                        <TextBlock Text="タブ名" VerticalAlignment="Center" Margin="0,0,6,0" />
+                                        <TextBox Text="{Binding NewCustomTabName, UpdateSourceTrigger=PropertyChanged}" Width="120" Margin="0,0,10,0" />
+                                        <TextBlock Text="初期カラム" VerticalAlignment="Center" Margin="0,0,6,0" />
+                                        <TextBox Text="{Binding NewCustomTabColumns, UpdateSourceTrigger=PropertyChanged}" Width="220" Margin="0,0,10,0" />
+                                        <Button Content="タブ追加" Command="{Binding AddCustomTabCommand}" Margin="0,0,6,0" />
+                                        <Button Content="タブ編集" Command="{Binding EditSelectedCustomTabCommand}" Margin="0,0,6,0" />
+                                        <Button Content="タブ削除" Command="{Binding RemoveSelectedCustomTabCommand}" />
+                                    </StackPanel>
+
+                                    <TabControl Grid.Row="1"
+                                                ItemsSource="{Binding CustomTabs}"
+                                                SelectedItem="{Binding SelectedCustomTab}"
+                                                MouseDoubleClick="CustomTabTabControl_MouseDoubleClick">
+                                        <TabControl.ItemTemplate>
+                                            <DataTemplate>
+                                                <TextBlock Text="{Binding Name}" />
+                                            </DataTemplate>
+                                        </TabControl.ItemTemplate>
+                                        <TabControl.ContentTemplate>
+                                            <DataTemplate>
+                                                <Grid Margin="0,4,0,0">
+                                                    <Grid.RowDefinitions>
+                                                        <RowDefinition Height="Auto" />
+                                                        <RowDefinition Height="*" />
+                                                    </Grid.RowDefinitions>
+
+                                                    <WrapPanel Grid.Row="0" Margin="0,0,0,6">
+                                                        <TextBlock Text="カラム名" VerticalAlignment="Center" Margin="0,0,6,0" />
+                                                        <TextBox Text="{Binding ColumnsInput, UpdateSourceTrigger=PropertyChanged}" Width="220" Margin="0,0,6,0" />
+                                                        <Button Content="カラム適用"
+                                                                Command="{Binding DataContext.ApplyCustomTabColumnsCommand, RelativeSource={RelativeSource AncestorType=Window}}"
+                                                                Margin="0,0,10,0" />
+                                                        <TextBox Text="{Binding NewFilePath, UpdateSourceTrigger=PropertyChanged}" Width="260" Margin="0,0,6,0" />
+                                                        <Button Content="パス追加"
+                                                                Command="{Binding DataContext.AddCustomFileByPathCommand, RelativeSource={RelativeSource AncestorType=Window}}"
+                                                                Margin="0,0,6,0" />
+                                                        <Button Content="ファイル選択"
+                                                                Command="{Binding DataContext.BrowseCustomFilesCommand, RelativeSource={RelativeSource AncestorType=Window}}"
+                                                                Margin="0,0,10,0" />
+                                                        <TextBox Text="{Binding NewDirectoryPath, UpdateSourceTrigger=PropertyChanged}" Width="260" Margin="0,0,6,0" />
+                                                        <Button Content="フォルダ選択"
+                                                                Command="{Binding DataContext.BrowseCustomDirectoryCommand, RelativeSource={RelativeSource AncestorType=Window}}"
+                                                                Margin="0,0,6,0" />
+                                                        <Button Content="配下追加"
+                                                                Command="{Binding DataContext.ScanCustomDirectoryCommand, RelativeSource={RelativeSource AncestorType=Window}}" />
+                                                        <TextBlock Text="一覧をダブルクリックで別ウィンドウのカスタム編集/プレビューを表示"
+                                                                   VerticalAlignment="Center"
+                                                                   Foreground="#666"
+                                                                   Margin="12,0,0,0" />
+                                                    </WrapPanel>
+
+                                                    <DataGrid Grid.Row="1"
+                                                              ItemsSource="{Binding RowsView}"
+                                                              AutoGeneratingColumn="CustomTabDataGrid_AutoGeneratingColumn"
+                                                              AutoGenerateColumns="True"
+                                                              CanUserAddRows="False"
+                                                              CanUserDeleteRows="True"
+                                                              IsReadOnly="False"
+                                                              MouseDoubleClick="CustomTabDataGrid_MouseDoubleClick" />
+                                                </Grid>
+                                            </DataTemplate>
+                                        </TabControl.ContentTemplate>
+                                    </TabControl>
+                                </Grid>
+                            </GroupBox>
+                        </Grid>
                     </DockPanel>
 
                     <Grid Grid.Row="0" Grid.Column="1">

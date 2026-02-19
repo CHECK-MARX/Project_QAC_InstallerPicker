@@ -1,0 +1,177 @@
+<Window x:Class="QACInstallerPicker.App.Views.CustomTabPreviewWindow"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        Title="カスタムタブ編集/プレビュー"
+        Height="760"
+        Width="1420"
+        MinHeight="520"
+        MinWidth="980"
+        ResizeMode="CanResize"
+        WindowStartupLocation="CenterOwner">
+    <Grid Margin="10">
+        <Grid.RowDefinitions>
+            <RowDefinition Height="*" />
+            <RowDefinition Height="Auto" />
+        </Grid.RowDefinitions>
+        <Grid.ColumnDefinitions>
+            <ColumnDefinition Width="3*" />
+            <ColumnDefinition Width="2*" />
+        </Grid.ColumnDefinitions>
+
+        <GroupBox Grid.Row="0" Grid.Column="0" Header="カスタムタブ（編集）">
+            <Grid>
+                <Grid.RowDefinitions>
+                    <RowDefinition Height="Auto" />
+                    <RowDefinition Height="*" />
+                </Grid.RowDefinitions>
+
+                <StackPanel Grid.Row="0" Orientation="Horizontal" Margin="0,0,0,8">
+                    <TextBlock Text="タブ名" VerticalAlignment="Center" Margin="0,0,6,0" />
+                    <TextBox Text="{Binding MainVm.NewCustomTabName, UpdateSourceTrigger=PropertyChanged}" Width="140" Margin="0,0,10,0" />
+                    <TextBlock Text="初期カラム" VerticalAlignment="Center" Margin="0,0,6,0" />
+                    <TextBox Text="{Binding MainVm.NewCustomTabColumns, UpdateSourceTrigger=PropertyChanged}" Width="260" Margin="0,0,10,0" />
+                    <Button Content="タブ追加" Command="{Binding MainVm.AddCustomTabCommand}" Margin="0,0,6,0" />
+                    <Button Content="タブ編集" Command="{Binding MainVm.EditSelectedCustomTabCommand}" Margin="0,0,6,0" />
+                    <Button Content="タブ削除" Command="{Binding MainVm.RemoveSelectedCustomTabCommand}" />
+                </StackPanel>
+
+                <TabControl Grid.Row="1"
+                            ItemsSource="{Binding MainVm.CustomTabs}"
+                            SelectedItem="{Binding MainVm.SelectedCustomTab, Mode=TwoWay}">
+                    <TabControl.ItemTemplate>
+                        <DataTemplate>
+                            <TextBlock Text="{Binding Name}" />
+                        </DataTemplate>
+                    </TabControl.ItemTemplate>
+                    <TabControl.ContentTemplate>
+                        <DataTemplate>
+                            <Grid Margin="0,4,0,0">
+                                <Grid.RowDefinitions>
+                                    <RowDefinition Height="Auto" />
+                                    <RowDefinition Height="*" />
+                                </Grid.RowDefinitions>
+
+                                <WrapPanel Grid.Row="0" Margin="0,0,0,6">
+                                    <TextBlock Text="カラム名" VerticalAlignment="Center" Margin="0,0,6,0" />
+                                    <TextBox Text="{Binding ColumnsInput, UpdateSourceTrigger=PropertyChanged}" Width="220" Margin="0,0,6,0" />
+                                    <Button Content="カラム適用"
+                                            Command="{Binding DataContext.MainVm.ApplyCustomTabColumnsCommand, RelativeSource={RelativeSource AncestorType=Window}}"
+                                            Margin="0,0,10,0" />
+                                    <TextBox Text="{Binding NewFilePath, UpdateSourceTrigger=PropertyChanged}" Width="240" Margin="0,0,6,0" />
+                                    <Button Content="パス追加"
+                                            Command="{Binding DataContext.MainVm.AddCustomFileByPathCommand, RelativeSource={RelativeSource AncestorType=Window}}"
+                                            Margin="0,0,6,0" />
+                                    <Button Content="ファイル選択"
+                                            Command="{Binding DataContext.MainVm.BrowseCustomFilesCommand, RelativeSource={RelativeSource AncestorType=Window}}"
+                                            Margin="0,0,10,0" />
+                                    <TextBox Text="{Binding NewDirectoryPath, UpdateSourceTrigger=PropertyChanged}" Width="240" Margin="0,0,6,0" />
+                                    <Button Content="フォルダ選択"
+                                            Command="{Binding DataContext.MainVm.BrowseCustomDirectoryCommand, RelativeSource={RelativeSource AncestorType=Window}}"
+                                            Margin="0,0,6,0" />
+                                    <Button Content="配下追加"
+                                            Command="{Binding DataContext.MainVm.ScanCustomDirectoryCommand, RelativeSource={RelativeSource AncestorType=Window}}" />
+                                </WrapPanel>
+
+                                <DataGrid Grid.Row="1"
+                                          ItemsSource="{Binding RowsView}"
+                                          AutoGeneratingColumn="CustomTabDataGrid_AutoGeneratingColumn"
+                                          AutoGenerateColumns="True"
+                                          CanUserAddRows="False"
+                                          CanUserDeleteRows="True"
+                                          IsReadOnly="False" />
+                            </Grid>
+                        </DataTemplate>
+                    </TabControl.ContentTemplate>
+                </TabControl>
+            </Grid>
+        </GroupBox>
+
+        <GroupBox Grid.Row="0" Grid.Column="1" Header="プレビュー（タブ別）" Margin="8,0,0,0">
+            <Grid>
+                <Grid.RowDefinitions>
+                    <RowDefinition Height="Auto" />
+                    <RowDefinition Height="2*" />
+                    <RowDefinition Height="*" />
+                </Grid.RowDefinitions>
+
+                <WrapPanel Grid.Row="0" Margin="0,0,0,8">
+                    <TextBlock Text="{Binding PreviewSummary}" VerticalAlignment="Center" Foreground="#555" Margin="0,0,12,0" />
+                    <TextBlock Text="ZIP名" VerticalAlignment="Center" Margin="0,0,6,0" />
+                    <ComboBox ItemsSource="{Binding ZipFileNameModeOptions}"
+                              SelectedItem="{Binding ZipFileNameMode, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}"
+                              Width="80"
+                              Margin="0,0,6,0" />
+                    <TextBox Text="{Binding CustomZipBaseName, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}"
+                             Width="180"
+                             IsEnabled="{Binding IsCustomZipNameEnabled}"
+                             Margin="0,0,10,0" />
+                    <TextBlock Text="{Binding SelectedZipNamePreview, StringFormat=圧縮名: {0}}" VerticalAlignment="Center" Foreground="#555" Margin="0,0,10,0" />
+                    <Button Content="全選択" Width="70" Margin="0,0,6,0" Click="SelectAllPreviewRowsButton_Click" />
+                    <Button Content="全解除" Width="70" Margin="0,0,6,0" Click="ClearPreviewRowsButton_Click" />
+                    <Button Content="再読込" Width="80" Margin="0,0,6,0" Click="RefreshButton_Click" />
+                    <Button Content="キュー圧縮反映" Width="110" Click="ApplyZipPlanButton_Click" />
+                </WrapPanel>
+
+                <TabControl Grid.Row="1"
+                            ItemsSource="{Binding PreviewTabs}"
+                            SelectedItem="{Binding SelectedPreviewTab, Mode=TwoWay}">
+                    <TabControl.ItemTemplate>
+                        <DataTemplate>
+                            <StackPanel Orientation="Horizontal">
+                                <TextBlock Text="{Binding TabName}" />
+                                <TextBlock Text=" (" />
+                                <TextBlock Text="{Binding Count}" />
+                                <TextBlock Text=")" />
+                            </StackPanel>
+                        </DataTemplate>
+                    </TabControl.ItemTemplate>
+                    <TabControl.ContentTemplate>
+                        <DataTemplate>
+                            <DataGrid ItemsSource="{Binding Rows}"
+                                      AutoGenerateColumns="False"
+                                      CanUserAddRows="False"
+                                      IsReadOnly="False">
+                                <DataGrid.Columns>
+                                    <DataGridTemplateColumn Header="対象" Width="56">
+                                        <DataGridTemplateColumn.CellTemplate>
+                                            <DataTemplate>
+                                                <CheckBox IsChecked="{Binding IsSelected, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}" HorizontalAlignment="Center" />
+                                            </DataTemplate>
+                                        </DataGridTemplateColumn.CellTemplate>
+                                    </DataGridTemplateColumn>
+                                    <DataGridTextColumn Header="フォルダ" Binding="{Binding Folder}" Width="110" IsReadOnly="True" />
+                                    <DataGridTextColumn Header="ファイル名" Binding="{Binding FileName}" Width="220" IsReadOnly="True" />
+                                    <DataGridTextColumn Header="フルパス" Binding="{Binding SourcePath}" Width="*" IsReadOnly="True" />
+                                    <DataGridTextColumn Header="列情報" Binding="{Binding Metadata}" Width="160" IsReadOnly="True" />
+                                </DataGrid.Columns>
+                            </DataGrid>
+                        </DataTemplate>
+                    </TabControl.ContentTemplate>
+                </TabControl>
+
+                <GroupBox Grid.Row="2" Header="フォルダごとの圧縮方法（チェックON: ZIP内でフォルダ保持）" Margin="0,8,0,0">
+                    <DataGrid ItemsSource="{Binding CurrentFolderOptions}"
+                              AutoGenerateColumns="False"
+                              CanUserAddRows="False"
+                              IsReadOnly="False">
+                        <DataGrid.Columns>
+                            <DataGridTemplateColumn Header="保持" Width="56">
+                                <DataGridTemplateColumn.CellTemplate>
+                                    <DataTemplate>
+                                        <CheckBox IsChecked="{Binding IncludeFolderInArchive, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}" HorizontalAlignment="Center" />
+                                    </DataTemplate>
+                                </DataGridTemplateColumn.CellTemplate>
+                            </DataGridTemplateColumn>
+                            <DataGridTextColumn Header="フォルダ" Binding="{Binding FolderName}" Width="*" IsReadOnly="True" />
+                        </DataGrid.Columns>
+                    </DataGrid>
+                </GroupBox>
+            </Grid>
+        </GroupBox>
+
+        <StackPanel Grid.Row="1" Grid.Column="0" Grid.ColumnSpan="2" Orientation="Horizontal" HorizontalAlignment="Right" Margin="0,8,0,0">
+            <TextBlock Text="この画面は自由にサイズ変更できます。" VerticalAlignment="Center" Foreground="#666" Margin="0,0,12,0" />
+            <Button Content="閉じる" Width="90" Click="CloseButton_Click" />
+        </StackPanel>
+    </Grid>
+</Window>

@@ -2,5 +2,8 @@
   "ExcelPath": "",
   "UncRoot": "",
   "OutputBaseFolder": "",
-  "MaxConcurrentTransfers": 2
+  "MaxConcurrentTransfers": 2,
+  "SelectedCustomTabName": "",
+  "CustomTabStates": [],
+  "CustomZipPlans": []
 }

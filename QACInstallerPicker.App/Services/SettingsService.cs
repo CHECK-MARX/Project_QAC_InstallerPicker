@@ -24,6 +24,10 @@ public class SettingsService
             settings.MaxConcurrentTransfers = 2;
         }
 
+        settings.SelectedCustomTabName ??= string.Empty;
+        settings.CustomTabStates ??= new();
+        settings.CustomZipPlans ??= new();
+
         return settings;
     }
 
