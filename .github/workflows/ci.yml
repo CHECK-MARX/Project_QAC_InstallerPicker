@@ -33,6 +33,20 @@ jobs:
       - name: Publish
         run: dotnet publish QACInstallerPicker.App/QACInstallerPicker.App.csproj -c Release -r win-x64 --self-contained false -o artifacts/publish --no-restore
 
+      - name: Build metadata
+        id: meta
+        shell: pwsh
+        run: |
+          $short = $env:GITHUB_SHA.Substring(0, 8)
+          "short_sha=$short" >> $env:GITHUB_OUTPUT
+          @"
+          commit=$env:GITHUB_SHA
+          run_id=$env:GITHUB_RUN_ID
+          run_number=$env:GITHUB_RUN_NUMBER
+          workflow=$env:GITHUB_WORKFLOW
+          built_at_utc=$([DateTime]::UtcNow.ToString("o"))
+          "@ | Set-Content -Path artifacts/publish/BUILD_INFO.txt -Encoding UTF8
+
       - name: Pack artifact zip
         shell: pwsh
         run: |
@@ -42,7 +56,7 @@ jobs:
       - name: Upload artifact
         uses: actions/upload-artifact@v4
         with:
-          name: QACInstallerPicker-win-x64
+          name: QACInstallerPicker-win-x64-${{ steps.meta.outputs.short_sha }}
           path: |
             artifacts/QACInstallerPicker-win-x64.zip
             artifacts/publish/**
