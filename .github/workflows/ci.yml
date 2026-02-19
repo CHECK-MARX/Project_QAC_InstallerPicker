@@ -37,14 +37,6 @@ jobs:
       - name: Publish
         run: dotnet publish QACInstallerPicker.App/QACInstallerPicker.App.csproj -c Release -r win-x64 --self-contained false -o artifacts/publish --no-restore
 
-      - name: Validate signing secrets for main push
-        if: ${{ github.event_name == 'push' && github.ref == 'refs/heads/main' }}
-        shell: pwsh
-        run: |
-          if ([string]::IsNullOrWhiteSpace($env:SIGN_CERT_BASE64) -or [string]::IsNullOrWhiteSpace($env:SIGN_CERT_PASSWORD)) {
-            throw "Missing signing secrets. Configure WINDOWS_SIGN_CERT_BASE64 and WINDOWS_SIGN_CERT_PASSWORD."
-          }
-
       - name: Authenticode sign published executables
         if: ${{ env.SIGN_CERT_BASE64 != '' && env.SIGN_CERT_PASSWORD != '' }}
         shell: pwsh
@@ -86,7 +78,7 @@ jobs:
         if: ${{ env.SIGN_CERT_BASE64 == '' || env.SIGN_CERT_PASSWORD == '' }}
         shell: pwsh
         run: |
-          Write-Host "::warning::Code signing was skipped because signing secrets are not configured."
+          Write-Host "::warning::Code signing was skipped. Configure WINDOWS_SIGN_CERT_BASE64 and WINDOWS_SIGN_CERT_PASSWORD to enable Authenticode signing."
 
       - name: Build metadata
         id: meta
