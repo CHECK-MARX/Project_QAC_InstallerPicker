@@ -12,6 +12,10 @@ jobs:
     runs-on: windows-latest
     permissions:
       contents: read
+    env:
+      SIGN_CERT_BASE64: ${{ secrets.WINDOWS_SIGN_CERT_BASE64 }}
+      SIGN_CERT_PASSWORD: ${{ secrets.WINDOWS_SIGN_CERT_PASSWORD }}
+      SIGN_TIMESTAMP_URL: ${{ vars.WINDOWS_SIGN_TIMESTAMP_URL }}
 
     steps:
       - name: Checkout
@@ -36,21 +40,14 @@ jobs:
       - name: Validate signing secrets for main push
         if: ${{ github.event_name == 'push' && github.ref == 'refs/heads/main' }}
         shell: pwsh
-        env:
-          SIGN_CERT_BASE64: ${{ secrets.WINDOWS_SIGN_CERT_BASE64 }}
-          SIGN_CERT_PASSWORD: ${{ secrets.WINDOWS_SIGN_CERT_PASSWORD }}
         run: |
           if ([string]::IsNullOrWhiteSpace($env:SIGN_CERT_BASE64) -or [string]::IsNullOrWhiteSpace($env:SIGN_CERT_PASSWORD)) {
             throw "Missing signing secrets. Configure WINDOWS_SIGN_CERT_BASE64 and WINDOWS_SIGN_CERT_PASSWORD."
           }
 
       - name: Authenticode sign published executables
-        if: ${{ secrets.WINDOWS_SIGN_CERT_BASE64 != '' && secrets.WINDOWS_SIGN_CERT_PASSWORD != '' }}
+        if: ${{ env.SIGN_CERT_BASE64 != '' && env.SIGN_CERT_PASSWORD != '' }}
         shell: pwsh
-        env:
-          SIGN_CERT_BASE64: ${{ secrets.WINDOWS_SIGN_CERT_BASE64 }}
-          SIGN_CERT_PASSWORD: ${{ secrets.WINDOWS_SIGN_CERT_PASSWORD }}
-          SIGN_TIMESTAMP_URL: ${{ vars.WINDOWS_SIGN_TIMESTAMP_URL }}
         run: |
           $timestampUrl = if ([string]::IsNullOrWhiteSpace($env:SIGN_TIMESTAMP_URL)) { "http://timestamp.digicert.com" } else { $env:SIGN_TIMESTAMP_URL }
           $tools = @(
@@ -86,7 +83,7 @@ jobs:
           }
 
       - name: Warn when signing skipped
-        if: ${{ secrets.WINDOWS_SIGN_CERT_BASE64 == '' || secrets.WINDOWS_SIGN_CERT_PASSWORD == '' }}
+        if: ${{ env.SIGN_CERT_BASE64 == '' || env.SIGN_CERT_PASSWORD == '' }}
         shell: pwsh
         run: |
           Write-Host "::warning::Code signing was skipped because signing secrets are not configured."
