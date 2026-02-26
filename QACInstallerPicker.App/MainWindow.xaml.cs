@@ -167,7 +167,9 @@ public partial class MainWindow : Window
 
     private void CustomTabDataGrid_AutoGeneratingColumn(object? sender, DataGridAutoGeneratingColumnEventArgs e)
     {
-        if (string.Equals(e.PropertyName, CustomTabViewModel.SourcePathColumnName, StringComparison.OrdinalIgnoreCase))
+        if (string.Equals(e.PropertyName, CustomTabViewModel.SourcePathColumnName, StringComparison.OrdinalIgnoreCase) ||
+            string.Equals(e.PropertyName, CustomTabViewModel.SelectionEnabledColumnName, StringComparison.OrdinalIgnoreCase) ||
+            string.Equals(e.PropertyName, CustomTabViewModel.SelectionLockReasonColumnName, StringComparison.OrdinalIgnoreCase))
         {
             e.Cancel = true;
             return;
@@ -175,7 +177,27 @@ public partial class MainWindow : Window
 
         if (string.Equals(e.PropertyName, CustomTabViewModel.SelectColumnName, StringComparison.OrdinalIgnoreCase))
         {
-            e.Column.Width = new DataGridLength(60);
+            var checkBoxFactory = new FrameworkElementFactory(typeof(System.Windows.Controls.CheckBox));
+            checkBoxFactory.SetValue(System.Windows.Controls.CheckBox.HorizontalAlignmentProperty, System.Windows.HorizontalAlignment.Center);
+            checkBoxFactory.SetBinding(ToggleButton.IsCheckedProperty, new System.Windows.Data.Binding($"[{CustomTabViewModel.SelectColumnName}]")
+            {
+                Mode = System.Windows.Data.BindingMode.TwoWay,
+                UpdateSourceTrigger = System.Windows.Data.UpdateSourceTrigger.PropertyChanged
+            });
+            checkBoxFactory.SetBinding(UIElement.IsEnabledProperty, new System.Windows.Data.Binding($"[{CustomTabViewModel.SelectionEnabledColumnName}]"));
+            checkBoxFactory.SetBinding(FrameworkElement.ToolTipProperty, new System.Windows.Data.Binding($"[{CustomTabViewModel.SelectionLockReasonColumnName}]"));
+
+            var template = new DataTemplate
+            {
+                VisualTree = checkBoxFactory
+            };
+
+            e.Column = new DataGridTemplateColumn
+            {
+                Header = CustomTabViewModel.SelectColumnName,
+                Width = new DataGridLength(60),
+                CellTemplate = template
+            };
             return;
         }
 
@@ -210,6 +232,59 @@ public partial class MainWindow : Window
 
         OpenCustomTabPopupWindow();
         e.Handled = true;
+    }
+
+    private void ModulesDataGrid_MouseDoubleClick(object sender, MouseButtonEventArgs e)
+    {
+        if (sender is not DataGrid dataGrid)
+        {
+            return;
+        }
+
+        if (FindVisualParent<DataGridColumnHeader>(e.OriginalSource as DependencyObject) != null)
+        {
+            return;
+        }
+
+        var row = FindVisualParent<DataGridRow>(e.OriginalSource as DependencyObject);
+        if (row?.Item is not ModuleRowViewModel module)
+        {
+            return;
+        }
+
+        if (!module.IsDownloadLocked)
+        {
+            return;
+        }
+
+        if (_viewModel.ToggleRedownloadForModule(module))
+        {
+            e.Handled = true;
+        }
+    }
+
+    private void BasketDataGrid_MouseDoubleClick(object sender, MouseButtonEventArgs e)
+    {
+        if (sender is not DataGrid dataGrid)
+        {
+            return;
+        }
+
+        if (FindVisualParent<DataGridColumnHeader>(e.OriginalSource as DependencyObject) != null)
+        {
+            return;
+        }
+
+        var row = FindVisualParent<DataGridRow>(e.OriginalSource as DependencyObject);
+        if (row?.Item is not BasketItemViewModel item || !item.IsAlreadyDownloaded)
+        {
+            return;
+        }
+
+        if (_viewModel.ToggleRedownloadForBasketItem(item))
+        {
+            e.Handled = true;
+        }
     }
 
     private void CustomTabTabControl_MouseDoubleClick(object sender, MouseButtonEventArgs e)

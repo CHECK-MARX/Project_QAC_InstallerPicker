@@ -94,6 +94,12 @@ public partial class ModuleRowViewModel : ObservableObject
     public string SelectionGroupKey { get; }
     public bool IsSelectionLeader { get; }
     public bool IsSelectionVisible => string.IsNullOrEmpty(SelectionGroupKey) || IsSelectionLeader;
+    public bool IsSelectionEnabled => IsEnabled && !IsDownloadLocked;
+    public string EffectiveDisabledReason => IsDownloadLocked
+        ? DownloadLockedReason
+        : HasDownloadedAsset
+            ? DownloadStatusReason
+        : DisabledReason;
     public IReadOnlyList<string> OsSelectionOptions => OsSelectionOptionsList;
 
     [ObservableProperty]
@@ -110,6 +116,18 @@ public partial class ModuleRowViewModel : ObservableObject
 
     [ObservableProperty]
     private bool _isSelected;
+
+    [ObservableProperty]
+    private bool _isDownloadLocked;
+
+    [ObservableProperty]
+    private string _downloadLockedReason = string.Empty;
+
+    [ObservableProperty]
+    private bool _hasDownloadedAsset;
+
+    [ObservableProperty]
+    private string _downloadStatusReason = string.Empty;
 
     public event EventHandler<ModuleSelectionChangedEventArgs>? SelectionChanged;
     public event EventHandler<ModuleOsSelectionChangedEventArgs>? OsSelectionChanged;
@@ -141,6 +159,32 @@ public partial class ModuleRowViewModel : ObservableObject
     partial void OnInstallerVersionOptionsChanged(IReadOnlyList<string> value)
     {
         OnPropertyChanged(nameof(HasInstallerVersionOptions));
+    }
+
+    partial void OnIsEnabledChanged(bool value)
+    {
+        OnPropertyChanged(nameof(IsSelectionEnabled));
+    }
+
+    partial void OnDisabledReasonChanged(string value)
+    {
+        OnPropertyChanged(nameof(EffectiveDisabledReason));
+    }
+
+    partial void OnIsDownloadLockedChanged(bool value)
+    {
+        OnPropertyChanged(nameof(IsSelectionEnabled));
+        OnPropertyChanged(nameof(EffectiveDisabledReason));
+    }
+
+    partial void OnHasDownloadedAssetChanged(bool value)
+    {
+        OnPropertyChanged(nameof(EffectiveDisabledReason));
+    }
+
+    partial void OnDownloadStatusReasonChanged(string value)
+    {
+        OnPropertyChanged(nameof(EffectiveDisabledReason));
     }
 
     partial void OnSelectedInstallerVersionChanged(string value)
@@ -238,5 +282,19 @@ public partial class ModuleRowViewModel : ObservableObject
             DisabledReason = string.IsNullOrWhiteSpace(reason) ? "共有スキャン未検出" : reason;
             SetSelectedSilently(false);
         }
+    }
+
+    public void SetDownloadLocked(bool value, string reason)
+    {
+        IsDownloadLocked = value;
+        DownloadLockedReason = value ? reason : string.Empty;
+    }
+
+    public void SetDownloadState(bool hasDownloadedAsset, bool isLocked, string reason)
+    {
+        HasDownloadedAsset = hasDownloadedAsset;
+        IsDownloadLocked = isLocked;
+        DownloadLockedReason = isLocked ? reason : string.Empty;
+        DownloadStatusReason = hasDownloadedAsset ? reason : string.Empty;
     }
 }

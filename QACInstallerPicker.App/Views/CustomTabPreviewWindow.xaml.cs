@@ -9,6 +9,8 @@ using System.Runtime.CompilerServices;
 using System.Text;
 using System.Windows;
 using System.Windows.Controls;
+using System.Windows.Controls.Primitives;
+using System.Windows.Data;
 using QACInstallerPicker.App.Models;
 using QACInstallerPicker.App.ViewModels;
 using WpfMessageBox = System.Windows.MessageBox;
@@ -21,8 +23,8 @@ public partial class CustomTabPreviewWindow : Window, INotifyPropertyChanged
     private readonly List<CustomTabPreviewTabViewModel> _attachedPreviewTabs = new();
     private string _previewSummary = string.Empty;
     private CustomTabPreviewTabViewModel? _selectedPreviewTab;
-    private string _zipFileNameMode = ZipFileNameModeTabName;
-    private string _customZipBaseName = string.Empty;
+    private RegisteredCustomZipPlanViewModel? _selectedRegisteredZipPlan;
+    private string _currentArchiveBaseName = string.Empty;
 
     public CustomTabPreviewWindow(MainViewModel mainVm)
     {
@@ -33,76 +35,32 @@ public partial class CustomTabPreviewWindow : Window, INotifyPropertyChanged
         MainVm.CustomTabs.CollectionChanged += OnCustomTabsCollectionChanged;
         AttachHandlers(MainVm.CustomTabs);
         RefreshPreview();
+        LoadRegisteredZipPlansFromMainViewModel();
         Closed += OnClosed;
     }
 
     public MainViewModel MainVm { get; }
 
     public ObservableCollection<CustomTabPreviewTabViewModel> PreviewTabs { get; } = new();
-    public ObservableCollection<string> ZipFileNameModeOptions { get; } = new()
-    {
-        ZipFileNameModeTabName,
-        ZipFileNameModeCustom
-    };
+    public ObservableCollection<RegisteredCustomZipPlanViewModel> RegisteredZipPlans { get; } = new();
 
     public ObservableCollection<FolderZipOptionViewModel> CurrentFolderOptions
     {
         get => SelectedPreviewTab?.FolderOptions ?? EmptyFolderOptions;
     }
 
-    public string SelectedZipNamePreview
+    public string CurrentArchiveBaseName
     {
-        get
-        {
-            if (SelectedPreviewTab == null)
-            {
-                return "-";
-            }
-
-            var archiveBaseName = ResolveArchiveBaseName(SelectedPreviewTab.TabName, PreviewTabs.Count);
-            return string.IsNullOrWhiteSpace(archiveBaseName) ? "(未設定)" : $"{archiveBaseName}.zip";
-        }
-    }
-
-    public string ZipFileNameMode
-    {
-        get => _zipFileNameMode;
+        get => _currentArchiveBaseName;
         set
         {
-            if (string.Equals(_zipFileNameMode, value, StringComparison.Ordinal))
+            if (string.Equals(_currentArchiveBaseName, value, StringComparison.Ordinal))
             {
                 return;
             }
 
-            _zipFileNameMode = value;
-            if (IsCustomZipNameEnabled && string.IsNullOrWhiteSpace(CustomZipBaseName))
-            {
-                CustomZipBaseName = SelectedPreviewTab?.TabName ?? "custom";
-            }
-
+            _currentArchiveBaseName = value;
             OnPropertyChanged();
-            OnPropertyChanged(nameof(IsCustomZipNameEnabled));
-            OnPropertyChanged(nameof(SelectedZipNamePreview));
-            SyncZipPlansToMainViewModel();
-        }
-    }
-
-    public bool IsCustomZipNameEnabled => string.Equals(ZipFileNameMode, ZipFileNameModeCustom, StringComparison.Ordinal);
-
-    public string CustomZipBaseName
-    {
-        get => _customZipBaseName;
-        set
-        {
-            if (string.Equals(_customZipBaseName, value, StringComparison.Ordinal))
-            {
-                return;
-            }
-
-            _customZipBaseName = value;
-            OnPropertyChanged();
-            OnPropertyChanged(nameof(SelectedZipNamePreview));
-            SyncZipPlansToMainViewModel();
         }
     }
 
@@ -134,17 +92,29 @@ public partial class CustomTabPreviewWindow : Window, INotifyPropertyChanged
             _selectedPreviewTab = value;
             OnPropertyChanged();
             OnPropertyChanged(nameof(CurrentFolderOptions));
-            OnPropertyChanged(nameof(SelectedZipNamePreview));
+            EnsureArchiveBaseName();
             UpdatePreviewSummary();
-            SyncZipPlansToMainViewModel();
+        }
+    }
+
+    public RegisteredCustomZipPlanViewModel? SelectedRegisteredZipPlan
+    {
+        get => _selectedRegisteredZipPlan;
+        set
+        {
+            if (ReferenceEquals(_selectedRegisteredZipPlan, value))
+            {
+                return;
+            }
+
+            _selectedRegisteredZipPlan = value;
+            OnPropertyChanged();
         }
     }
 
     public event PropertyChangedEventHandler? PropertyChanged;
 
     private static ObservableCollection<FolderZipOptionViewModel> EmptyFolderOptions { get; } = new();
-    private const string ZipFileNameModeTabName = "\u30BF\u30D6\u540D";
-    private const string ZipFileNameModeCustom = "\u4EFB\u610F";
 
     public void RefreshPreview()
     {
@@ -181,10 +151,10 @@ public partial class CustomTabPreviewWindow : Window, INotifyPropertyChanged
                                tab.TabName.Equals(previousName, StringComparison.OrdinalIgnoreCase))
                            ?? PreviewTabs.FirstOrDefault();
 
-        Title = $"\u30AB\u30B9\u30BF\u30E0\u30BF\u30D6\u7DE8\u96C6/\u30D7\u30EC\u30D3\u30E5\u30FC ({previewTabs.Count})";
+        Title = $"カスタムタブ編集/圧縮プレビュー ({previewTabs.Count})";
+        PruneRegisteredZipPlans();
+        EnsureArchiveBaseName();
         UpdatePreviewSummary();
-        OnPropertyChanged(nameof(SelectedZipNamePreview));
-        SyncZipPlansToMainViewModel();
     }
 
     private Dictionary<string, HashSet<string>> SnapshotSelectedRows()
@@ -222,13 +192,14 @@ public partial class CustomTabPreviewWindow : Window, INotifyPropertyChanged
         IReadOnlyDictionary<string, bool>? folderOptions)
     {
         var rows = tab.GetSelectedFiles()
-            .OrderBy(file => file.FileName, StringComparer.OrdinalIgnoreCase)
             .Select(file => new CustomTabPreviewRow(
                 selectedSourcePaths == null || selectedSourcePaths.Contains(file.SourcePath),
                 GetNearestFolderName(file.SourcePath),
                 file.FileName,
                 file.SourcePath,
-                BuildMetadata(file.ColumnValues)))
+                BuildMetadata(file.ColumnValues),
+                file.IsSelectionEnabled,
+                file.SelectionLockReason))
             .ToList();
 
         var options = rows
@@ -313,6 +284,7 @@ public partial class CustomTabPreviewWindow : Window, INotifyPropertyChanged
         {
             previewTab.Changed -= OnPreviewTabChanged;
         }
+
         _attachedPreviewTabs.Clear();
     }
 
@@ -345,7 +317,6 @@ public partial class CustomTabPreviewWindow : Window, INotifyPropertyChanged
     private void OnPreviewTabChanged(object? sender, EventArgs e)
     {
         UpdatePreviewSummary();
-        SyncZipPlansToMainViewModel();
     }
 
     private void UpdatePreviewSummary()
@@ -353,7 +324,21 @@ public partial class CustomTabPreviewWindow : Window, INotifyPropertyChanged
         var tabCount = PreviewTabs.Count;
         var fileCount = PreviewTabs.Sum(tab => tab.Count);
         var selectedCount = PreviewTabs.Sum(tab => tab.SelectedCount);
-        PreviewSummary = $"\u30BF\u30D6\u6570: {tabCount}  \u8868\u793A\u30D5\u30A1\u30A4\u30EB\u5408\u8A08: {fileCount}  \u5727\u7E2E\u5BFE\u8C61: {selectedCount}";
+        var zipCount = RegisteredZipPlans.Count;
+        PreviewSummary = $"タブ数: {tabCount}  表示ファイル合計: {fileCount}  圧縮対象: {selectedCount}  登録ZIP: {zipCount}";
+    }
+
+    private void EnsureArchiveBaseName()
+    {
+        if (SelectedPreviewTab == null)
+        {
+            return;
+        }
+
+        if (string.IsNullOrWhiteSpace(CurrentArchiveBaseName))
+        {
+            CurrentArchiveBaseName = SelectedPreviewTab.TabName;
+        }
     }
 
     private void OnClosed(object? sender, EventArgs e)
@@ -389,72 +374,132 @@ public partial class CustomTabPreviewWindow : Window, INotifyPropertyChanged
         SelectedPreviewTab.SetRowSelection(false);
     }
 
-    private void ApplyZipPlanButton_Click(object sender, RoutedEventArgs e)
+    private void RegisterZipPlanButton_Click(object sender, RoutedEventArgs e)
     {
-        SyncZipPlansToMainViewModel();
-        var planCount = MainVm.GetCustomZipPlans().Count;
-        WpfMessageBox.Show($"\u30AD\u30E5\u30FC\u8FFD\u52A0\u6642\u306E\u5727\u7E2E\u8A2D\u5B9A\u3092\u53CD\u6620\u3057\u307E\u3057\u305F\u3002\n\u30BF\u30D6\u6570: {planCount}", "\u53CD\u6620\u5B8C\u4E86", MessageBoxButton.OK, MessageBoxImage.Information);
+        if (SelectedPreviewTab == null)
+        {
+            WpfMessageBox.Show("タブを選択してください。", "情報不足", MessageBoxButton.OK, MessageBoxImage.Information);
+            return;
+        }
+
+        var rows = SelectedPreviewTab.Rows
+            .Where(row => row.IsSelected)
+            .ToList();
+        if (rows.Count == 0)
+        {
+            WpfMessageBox.Show("圧縮対象のファイルにチェックを入れてください。", "情報不足", MessageBoxButton.OK, MessageBoxImage.Information);
+            return;
+        }
+
+        var archiveBaseName = SanitizeFileName(CurrentArchiveBaseName);
+        if (string.IsNullOrWhiteSpace(archiveBaseName))
+        {
+            archiveBaseName = SanitizeFileName(SelectedPreviewTab.TabName);
+        }
+
+        if (string.IsNullOrWhiteSpace(archiveBaseName))
+        {
+            archiveBaseName = "custom";
+        }
+
+        var items = rows
+            .Select(row => new CustomZipPlanItem(
+                row.SourcePath,
+                row.Folder,
+                row.FileName,
+                SelectedPreviewTab.GetIncludeFolderInArchive(row.Folder)))
+            .ToList();
+
+        var plan = new CustomZipPlan(SelectedPreviewTab.TabName, archiveBaseName, items);
+        var vm = new RegisteredCustomZipPlanViewModel(plan);
+        var existing = RegisteredZipPlans
+            .Select((item, index) => new { item, index })
+            .FirstOrDefault(entry => entry.item.Matches(plan.TabName, plan.ArchiveBaseName));
+
+        if (existing != null)
+        {
+            RegisteredZipPlans[existing.index] = vm;
+            SelectedRegisteredZipPlan = RegisteredZipPlans[existing.index];
+        }
+        else
+        {
+            RegisteredZipPlans.Add(vm);
+            SelectedRegisteredZipPlan = vm;
+        }
+
+        SyncRegisteredZipPlansToMainViewModel();
+        UpdatePreviewSummary();
     }
 
-    private void SyncZipPlansToMainViewModel()
+    private void RemoveRegisteredZipPlanButton_Click(object sender, RoutedEventArgs e)
     {
-        MainVm.SetCustomZipPlans(BuildZipPlans());
+        if (SelectedRegisteredZipPlan == null)
+        {
+            WpfMessageBox.Show("削除する圧縮登録を選択してください。", "情報不足", MessageBoxButton.OK, MessageBoxImage.Information);
+            return;
+        }
+
+        RegisteredZipPlans.Remove(SelectedRegisteredZipPlan);
+        SelectedRegisteredZipPlan = RegisteredZipPlans.FirstOrDefault();
+        SyncRegisteredZipPlansToMainViewModel();
+        UpdatePreviewSummary();
+    }
+
+    private void LoadRegisteredZipPlansFromMainViewModel()
+    {
+        RegisteredZipPlans.Clear();
+        foreach (var plan in MainVm.GetCustomZipPlans())
+        {
+            if (string.IsNullOrWhiteSpace(plan.TabName) || string.IsNullOrWhiteSpace(plan.ArchiveBaseName))
+            {
+                continue;
+            }
+
+            if (plan.Items == null || plan.Items.Count == 0)
+            {
+                continue;
+            }
+
+            RegisteredZipPlans.Add(new RegisteredCustomZipPlanViewModel(plan));
+        }
+
+        SelectedRegisteredZipPlan = RegisteredZipPlans.FirstOrDefault();
+        UpdatePreviewSummary();
+    }
+
+    private void PruneRegisteredZipPlans()
+    {
+        var tabNames = MainVm.CustomTabs
+            .Select(tab => tab.Name)
+            .ToHashSet(StringComparer.OrdinalIgnoreCase);
+
+        var removed = false;
+        for (var index = RegisteredZipPlans.Count - 1; index >= 0; index--)
+        {
+            if (tabNames.Contains(RegisteredZipPlans[index].TabName))
+            {
+                continue;
+            }
+
+            RegisteredZipPlans.RemoveAt(index);
+            removed = true;
+        }
+
+        if (removed)
+        {
+            SelectedRegisteredZipPlan = RegisteredZipPlans.FirstOrDefault();
+            SyncRegisteredZipPlansToMainViewModel();
+        }
+    }
+
+    private void SyncRegisteredZipPlansToMainViewModel()
+    {
+        var plans = RegisteredZipPlans
+            .Select(plan => plan.ToPlan())
+            .ToList();
+
+        MainVm.SetCustomZipPlans(plans);
         MainVm.RefreshBasketForCustomZipPlans();
-    }
-
-    private IReadOnlyList<CustomZipPlan> BuildZipPlans()
-    {
-        var plans = new List<CustomZipPlan>();
-        var tabCount = PreviewTabs.Count;
-        foreach (var previewTab in PreviewTabs)
-        {
-            var archiveBaseName = ResolveArchiveBaseName(previewTab.TabName, tabCount);
-            if (string.IsNullOrWhiteSpace(archiveBaseName))
-            {
-                continue;
-            }
-
-            var items = previewTab.Rows
-                .Where(row => row.IsSelected)
-                .Select(row => new CustomZipPlanItem(
-                    row.SourcePath,
-                    row.Folder,
-                    row.FileName,
-                    previewTab.GetIncludeFolderInArchive(row.Folder)))
-                .ToList();
-
-            if (items.Count == 0)
-            {
-                continue;
-            }
-
-            plans.Add(new CustomZipPlan(previewTab.TabName, archiveBaseName, items));
-        }
-
-        return plans;
-    }
-
-    private string ResolveArchiveBaseName(string tabName, int totalTabCount)
-    {
-        var baseName = IsCustomZipNameEnabled ? CustomZipBaseName : tabName;
-        var sanitized = SanitizeFileName(baseName);
-        if (string.IsNullOrWhiteSpace(sanitized))
-        {
-            return string.Empty;
-        }
-
-        if (!IsCustomZipNameEnabled || totalTabCount <= 1)
-        {
-            return sanitized;
-        }
-
-        var tabSuffix = SanitizeFileName(tabName);
-        if (string.IsNullOrWhiteSpace(tabSuffix))
-        {
-            return sanitized;
-        }
-
-        return $"{sanitized}_{tabSuffix}";
     }
 
     private static string SanitizeFileName(string? fileName)
@@ -484,7 +529,9 @@ public partial class CustomTabPreviewWindow : Window, INotifyPropertyChanged
 
     private void CustomTabDataGrid_AutoGeneratingColumn(object? sender, DataGridAutoGeneratingColumnEventArgs e)
     {
-        if (string.Equals(e.PropertyName, CustomTabViewModel.SourcePathColumnName, StringComparison.OrdinalIgnoreCase))
+        if (string.Equals(e.PropertyName, CustomTabViewModel.SourcePathColumnName, StringComparison.OrdinalIgnoreCase) ||
+            string.Equals(e.PropertyName, CustomTabViewModel.SelectionEnabledColumnName, StringComparison.OrdinalIgnoreCase) ||
+            string.Equals(e.PropertyName, CustomTabViewModel.SelectionLockReasonColumnName, StringComparison.OrdinalIgnoreCase))
         {
             e.Cancel = true;
             return;
@@ -492,7 +539,27 @@ public partial class CustomTabPreviewWindow : Window, INotifyPropertyChanged
 
         if (string.Equals(e.PropertyName, CustomTabViewModel.SelectColumnName, StringComparison.OrdinalIgnoreCase))
         {
-            e.Column.Width = new DataGridLength(60);
+            var checkBoxFactory = new FrameworkElementFactory(typeof(System.Windows.Controls.CheckBox));
+            checkBoxFactory.SetValue(System.Windows.Controls.CheckBox.HorizontalAlignmentProperty, System.Windows.HorizontalAlignment.Center);
+            checkBoxFactory.SetBinding(ToggleButton.IsCheckedProperty, new System.Windows.Data.Binding($"[{CustomTabViewModel.SelectColumnName}]")
+            {
+                Mode = System.Windows.Data.BindingMode.TwoWay,
+                UpdateSourceTrigger = System.Windows.Data.UpdateSourceTrigger.PropertyChanged
+            });
+            checkBoxFactory.SetBinding(UIElement.IsEnabledProperty, new System.Windows.Data.Binding($"[{CustomTabViewModel.SelectionEnabledColumnName}]"));
+            checkBoxFactory.SetBinding(FrameworkElement.ToolTipProperty, new System.Windows.Data.Binding($"[{CustomTabViewModel.SelectionLockReasonColumnName}]"));
+
+            var template = new DataTemplate
+            {
+                VisualTree = checkBoxFactory
+            };
+
+            e.Column = new DataGridTemplateColumn
+            {
+                Header = CustomTabViewModel.SelectColumnName,
+                Width = new DataGridLength(60),
+                CellTemplate = template
+            };
             return;
         }
 
@@ -548,7 +615,10 @@ public sealed class CustomTabPreviewTabViewModel
     {
         foreach (var row in Rows)
         {
-            row.IsSelected = isSelected;
+            if (row.IsSelectionEnabled)
+            {
+                row.IsSelected = isSelected;
+            }
         }
     }
 
@@ -578,9 +648,13 @@ public sealed class CustomTabPreviewRow : INotifyPropertyChanged
         string folder,
         string fileName,
         string sourcePath,
-        string metadata)
+        string metadata,
+        bool isSelectionEnabled,
+        string selectionLockReason)
     {
-        _isSelected = isSelected;
+        IsSelectionEnabled = isSelectionEnabled;
+        SelectionLockReason = selectionLockReason;
+        _isSelected = isSelectionEnabled ? isSelected : true;
         Folder = folder;
         FileName = fileName;
         SourcePath = sourcePath;
@@ -592,16 +666,19 @@ public sealed class CustomTabPreviewRow : INotifyPropertyChanged
         get => _isSelected;
         set
         {
-            if (_isSelected == value)
+            var target = IsSelectionEnabled ? value : true;
+            if (_isSelected == target)
             {
                 return;
             }
 
-            _isSelected = value;
+            _isSelected = target;
             PropertyChanged?.Invoke(this, new PropertyChangedEventArgs(nameof(IsSelected)));
         }
     }
 
+    public bool IsSelectionEnabled { get; }
+    public string SelectionLockReason { get; }
     public string Folder { get; }
     public string FileName { get; }
     public string SourcePath { get; }
@@ -638,4 +715,79 @@ public sealed class FolderZipOptionViewModel : INotifyPropertyChanged
     }
 
     public event PropertyChangedEventHandler? PropertyChanged;
+}
+
+public sealed class RegisteredCustomZipPlanViewModel
+{
+    public RegisteredCustomZipPlanViewModel(CustomZipPlan plan)
+    {
+        TabName = plan.TabName;
+        ArchiveBaseName = plan.ArchiveBaseName;
+        Items = plan.Items.ToList();
+    }
+
+    public string TabName { get; }
+    public string ArchiveBaseName { get; }
+    public IReadOnlyList<CustomZipPlanItem> Items { get; }
+    public string ZipFileName => $"{ArchiveBaseName}.zip";
+    public int ItemCount => Items.Count;
+
+    public string ContentsPreview
+    {
+        get
+        {
+            if (Items.Count == 0)
+            {
+                return "-";
+            }
+
+            var previews = Items
+                .Take(5)
+                .Select(BuildEntryName)
+                .ToList();
+            if (Items.Count > previews.Count)
+            {
+                previews.Add($"...（他 {Items.Count - previews.Count} 件）");
+            }
+
+            return string.Join(" / ", previews);
+        }
+    }
+
+    public string ContentsFull
+    {
+        get
+        {
+            if (Items.Count == 0)
+            {
+                return "-";
+            }
+
+            var lines = Items
+                .Select(BuildEntryName)
+                .ToArray();
+            return string.Join(Environment.NewLine, lines);
+        }
+    }
+
+    public bool Matches(string tabName, string archiveBaseName)
+    {
+        return TabName.Equals(tabName, StringComparison.OrdinalIgnoreCase)
+               && ArchiveBaseName.Equals(archiveBaseName, StringComparison.OrdinalIgnoreCase);
+    }
+
+    public CustomZipPlan ToPlan()
+    {
+        return new CustomZipPlan(TabName, ArchiveBaseName, Items.ToList());
+    }
+
+    private static string BuildEntryName(CustomZipPlanItem item)
+    {
+        var prefix = item.IncludeFolderInArchive &&
+                     !string.IsNullOrWhiteSpace(item.FolderName) &&
+                     !string.Equals(item.FolderName, "-", StringComparison.Ordinal)
+            ? $"{item.FolderName}/"
+            : string.Empty;
+        return $"{prefix}{item.FileName}";
+    }
 }

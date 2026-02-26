@@ -11,7 +11,9 @@ public sealed record CustomSelectedFile(
     string TabName,
     string SourcePath,
     string FileName,
-    IReadOnlyDictionary<string, string> ColumnValues);
+    IReadOnlyDictionary<string, string> ColumnValues,
+    bool IsSelectionEnabled,
+    string SelectionLockReason);
 
 public partial class CustomTabViewModel : ObservableObject
 {
@@ -19,8 +21,11 @@ public partial class CustomTabViewModel : ObservableObject
     public const string FolderColumnName = "\u30D5\u30A9\u30EB\u30C0";
     public const string FileNameColumnName = "\u30D5\u30A1\u30A4\u30EB\u540D";
     public const string SourcePathColumnName = "__SourcePath";
+    public const string SelectionEnabledColumnName = "__SelectionEnabled";
+    public const string SelectionLockReasonColumnName = "__SelectionLockReason";
 
     private DataTable _table;
+    private bool _suppressChangedNotification;
 
     public CustomTabViewModel(string name, IEnumerable<string>? customColumns = null)
     {
@@ -162,11 +167,15 @@ public partial class CustomTabViewModel : ObservableObject
 
             var sourcePath = row.Field<string>(SourcePathColumnName) ?? string.Empty;
             var fileName = row.Field<string>(FileNameColumnName) ?? Path.GetFileName(sourcePath);
+            var isSelectionEnabled = row.Field<bool?>(SelectionEnabledColumnName) ?? true;
+            var selectionLockReason = row.Field<string>(SelectionLockReasonColumnName) ?? string.Empty;
             selected.Add(new CustomSelectedFile(
                 Name,
                 sourcePath,
                 fileName,
-                GetCustomValues(row)));
+                GetCustomValues(row),
+                isSelectionEnabled,
+                selectionLockReason));
         }
 
         return selected;
@@ -180,6 +189,52 @@ public partial class CustomTabViewModel : ObservableObject
             StringComparison.OrdinalIgnoreCase));
     }
 
+    public void ClearSelection()
+    {
+        SetSelectedByPaths(Array.Empty<string>());
+    }
+
+    public void SetSelectedByPaths(IEnumerable<string> sourcePaths)
+    {
+        var selectedSet = sourcePaths
+            .Where(path => !string.IsNullOrWhiteSpace(path))
+            .ToHashSet(StringComparer.OrdinalIgnoreCase);
+
+        RunWithoutChangedNotification(() =>
+        {
+            foreach (var row in _table.Rows.Cast<DataRow>())
+            {
+                var sourcePath = row.Field<string>(SourcePathColumnName) ?? string.Empty;
+                row[SelectColumnName] = selectedSet.Contains(sourcePath);
+            }
+        });
+
+        Changed?.Invoke(this, EventArgs.Empty);
+    }
+
+    public void SetDownloadLockByPaths(IEnumerable<string> sourcePaths, string reason)
+    {
+        var lockedSet = sourcePaths
+            .Where(path => !string.IsNullOrWhiteSpace(path))
+            .ToHashSet(StringComparer.OrdinalIgnoreCase);
+
+        RunWithoutChangedNotification(() =>
+        {
+            foreach (var row in _table.Rows.Cast<DataRow>())
+            {
+                var sourcePath = row.Field<string>(SourcePathColumnName) ?? string.Empty;
+                var isLocked = lockedSet.Contains(sourcePath);
+                row[SelectionEnabledColumnName] = !isLocked;
+                row[SelectionLockReasonColumnName] = isLocked ? reason : string.Empty;
+
+                if (isLocked)
+                {
+                    row[SelectColumnName] = true;
+                }
+            }
+        });
+    }
+
     private static DataTable CreateTable(IEnumerable<string> customColumns)
     {
         var table = new DataTable();
@@ -187,10 +242,26 @@ public partial class CustomTabViewModel : ObservableObject
         table.Columns.Add(FolderColumnName, typeof(string));
         table.Columns.Add(FileNameColumnName, typeof(string));
         table.Columns.Add(SourcePathColumnName, typeof(string));
+        table.Columns.Add(SelectionEnabledColumnName, typeof(bool));
+        table.Columns.Add(SelectionLockReasonColumnName, typeof(string));
         var sourcePathColumn = table.Columns[SourcePathColumnName];
         if (sourcePathColumn != null)
         {
             sourcePathColumn.ColumnMapping = MappingType.Hidden;
+        }
+
+        var selectionEnabledColumn = table.Columns[SelectionEnabledColumnName];
+        if (selectionEnabledColumn != null)
+        {
+            selectionEnabledColumn.ColumnMapping = MappingType.Hidden;
+            selectionEnabledColumn.DefaultValue = true;
+        }
+
+        var selectionLockReasonColumn = table.Columns[SelectionLockReasonColumnName];
+        if (selectionLockReasonColumn != null)
+        {
+            selectionLockReasonColumn.ColumnMapping = MappingType.Hidden;
+            selectionLockReasonColumn.DefaultValue = string.Empty;
         }
 
         foreach (var column in customColumns)
@@ -232,7 +303,9 @@ public partial class CustomTabViewModel : ObservableObject
         return !columnName.Equals(SelectColumnName, StringComparison.OrdinalIgnoreCase)
                && !columnName.Equals(FolderColumnName, StringComparison.OrdinalIgnoreCase)
                && !columnName.Equals(FileNameColumnName, StringComparison.OrdinalIgnoreCase)
-               && !columnName.Equals(SourcePathColumnName, StringComparison.OrdinalIgnoreCase);
+               && !columnName.Equals(SourcePathColumnName, StringComparison.OrdinalIgnoreCase)
+               && !columnName.Equals(SelectionEnabledColumnName, StringComparison.OrdinalIgnoreCase)
+               && !columnName.Equals(SelectionLockReasonColumnName, StringComparison.OrdinalIgnoreCase);
     }
 
     private static IReadOnlyList<string> ParseColumnNames(string input)
@@ -309,11 +382,52 @@ public partial class CustomTabViewModel : ObservableObject
 
     private void OnTableChanged(object? sender, DataRowChangeEventArgs e)
     {
+        if (_suppressChangedNotification)
+        {
+            return;
+        }
+
         Changed?.Invoke(this, EventArgs.Empty);
     }
 
     private void OnTableColumnChanged(object? sender, DataColumnChangeEventArgs e)
     {
+        var row = e.Row;
+        var columnName = e.Column?.ColumnName;
+        if (row != null &&
+            row.RowState != DataRowState.Deleted &&
+            columnName != null &&
+            columnName.Equals(SelectColumnName, StringComparison.OrdinalIgnoreCase))
+        {
+            var isEnabled = row.Field<bool?>(SelectionEnabledColumnName) ?? true;
+            if (!isEnabled)
+            {
+                if (!(row.Field<bool?>(SelectColumnName) ?? false))
+                {
+                    row[SelectColumnName] = true;
+                }
+                return;
+            }
+        }
+
+        if (_suppressChangedNotification)
+        {
+            return;
+        }
+
         Changed?.Invoke(this, EventArgs.Empty);
+    }
+
+    private void RunWithoutChangedNotification(Action action)
+    {
+        _suppressChangedNotification = true;
+        try
+        {
+            action();
+        }
+        finally
+        {
+            _suppressChangedNotification = false;
+        }
     }
 }

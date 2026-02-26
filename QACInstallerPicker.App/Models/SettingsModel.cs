@@ -11,4 +11,5 @@ public class SettingsModel
     public string SelectedCustomTabName { get; set; } = string.Empty;
     public List<CustomTabState> CustomTabStates { get; set; } = new();
     public List<CustomZipPlan> CustomZipPlans { get; set; } = new();
+    public List<SelectionStateHistoryEntry> SelectionStateHistory { get; set; } = new();
 }

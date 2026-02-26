@@ -27,6 +27,7 @@ public class SettingsService
         settings.SelectedCustomTabName ??= string.Empty;
         settings.CustomTabStates ??= new();
         settings.CustomZipPlans ??= new();
+        settings.SelectionStateHistory ??= new();
 
         return settings;
     }

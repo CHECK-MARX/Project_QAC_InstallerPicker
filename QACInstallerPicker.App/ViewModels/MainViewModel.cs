@@ -39,11 +39,13 @@ public partial class MainViewModel : ObservableObject
     private CompatibilityData? _compatibility;
     private Dictionary<string, List<string>> _synonyms = new(StringComparer.OrdinalIgnoreCase);
     private List<LogicalItem> _logicalItems = new();
-    private readonly Dictionary<string, CustomZipPlan> _customZipPlans = new(StringComparer.OrdinalIgnoreCase);
+    private readonly List<CustomZipPlan> _customZipPlans = new();
     private readonly List<ManualPickEntry> _manualPicks = new();
     private readonly Dictionary<long, TransferStatus> _transferStatusLookup = new();
+    private readonly HashSet<string> _redownloadUnlockedDestinationPaths = new(StringComparer.OrdinalIgnoreCase);
     private bool _suppressSelectionSync;
     private bool _isRestoringCustomState;
+    private bool _isApplyingSelectionHistory;
     private static readonly Regex VersionRegex = new(@"\d+(?:\.\d+)+", RegexOptions.Compiled);
     private static readonly Regex VersionNumberRegex = new(@"\d+", RegexOptions.Compiled);
     private const string ScanOnlyVersionLabel = "共有スキャン";
@@ -117,6 +119,8 @@ public partial class MainViewModel : ObservableObject
     };
     private const int TransferTabIndex = 2;
     private const string ComplianceModuleSuffix = "コンプライアンスモジュール";
+    private const int SelectionHistoryLimit = 5;
+    private const string AlreadyDownloadedReason = "既にダウンロード済み（ダブルクリックで再DLに含める）";
 
     public MainViewModel()
     {
@@ -144,8 +148,10 @@ public partial class MainViewModel : ObservableObject
         ScanErrors = new ObservableCollection<string>();
         ScanSelectionItems = new ObservableCollection<ScanSelectionItemViewModel>();
         CustomTabs = new ObservableCollection<CustomTabViewModel>();
+        SelectionStateHistoryEntries = new ObservableCollection<SelectionStateHistoryEntry>();
 
         RestoreCustomStateFromSettings();
+        LoadSelectionStateHistoryFromSettings();
     }
 
     public ObservableCollection<HelixVersionViewModel> HelixVersions { get; }
@@ -160,10 +166,12 @@ public partial class MainViewModel : ObservableObject
     public ObservableCollection<string> ScanErrors { get; }
     public ObservableCollection<ScanSelectionItemViewModel> ScanSelectionItems { get; }
     public ObservableCollection<CustomTabViewModel> CustomTabs { get; }
+    public ObservableCollection<SelectionStateHistoryEntry> SelectionStateHistoryEntries { get; }
 
     public void SetCustomZipPlans(IEnumerable<CustomZipPlan> plans)
     {
         _customZipPlans.Clear();
+        var normalized = new Dictionary<string, List<CustomZipPlanItem>>(StringComparer.OrdinalIgnoreCase);
         foreach (var plan in plans)
         {
             if (string.IsNullOrWhiteSpace(plan.TabName) || string.IsNullOrWhiteSpace(plan.ArchiveBaseName))
@@ -179,7 +187,34 @@ public partial class MainViewModel : ObservableObject
                 continue;
             }
 
-            _customZipPlans[plan.TabName] = plan with { Items = items };
+            var key = BuildCustomZipPlanStorageKey(plan.TabName, plan.ArchiveBaseName);
+            if (!normalized.TryGetValue(key, out var list))
+            {
+                list = new List<CustomZipPlanItem>();
+                normalized[key] = list;
+            }
+
+            list.AddRange(items);
+        }
+
+        foreach (var pair in normalized)
+        {
+            if (!TryParseCustomZipPlanStorageKey(pair.Key, out var tabName, out var archiveBaseName))
+            {
+                continue;
+            }
+
+            var mergedItems = pair.Value
+                .Where(item => !string.IsNullOrWhiteSpace(item.SourcePath) && !string.IsNullOrWhiteSpace(item.FileName))
+                .GroupBy(item => item.SourcePath, StringComparer.OrdinalIgnoreCase)
+                .Select(group => group.First())
+                .ToList();
+            if (mergedItems.Count == 0)
+            {
+                continue;
+            }
+
+            _customZipPlans.Add(new CustomZipPlan(tabName, archiveBaseName, mergedItems));
         }
 
         PersistCustomState();
@@ -187,7 +222,7 @@ public partial class MainViewModel : ObservableObject
 
     public IReadOnlyList<CustomZipPlan> GetCustomZipPlans()
     {
-        return _customZipPlans.Values
+        return _customZipPlans
             .Select(plan => plan with { Items = plan.Items.ToList() })
             .ToList();
     }
@@ -242,6 +277,9 @@ public partial class MainViewModel : ObservableObject
     [ObservableProperty]
     private string _newCustomTabColumns = string.Empty;
 
+    [ObservableProperty]
+    private SelectionStateHistoryEntry? _selectedSelectionStateHistoryEntry;
+
     private bool _suppressUploadListEdit;
     private bool _uploadListUserEdited;
 
@@ -266,8 +304,13 @@ public partial class MainViewModel : ObservableObject
             if (!string.Equals(Settings.OutputBaseFolder, value, StringComparison.Ordinal))
             {
                 Settings.OutputBaseFolder = value;
+                _redownloadUnlockedDestinationPaths.Clear();
                 OnPropertyChanged();
                 OnPropertyChanged(nameof(OutputFolderPreview));
+                if (!_isApplyingSelectionHistory && !_isRestoringCustomState)
+                {
+                    UpdateBasket();
+                }
             }
         }
     }
@@ -327,6 +370,7 @@ public partial class MainViewModel : ObservableObject
     {
         Settings = _settingsService.Load();
         RestoreCustomStateFromSettings();
+        LoadSelectionStateHistoryFromSettings();
         if (TransferItems.Count == 0)
         {
             _transferManager = null;
@@ -666,6 +710,34 @@ public partial class MainViewModel : ObservableObject
     }
 
     [RelayCommand]
+    private void ResetSelectionState()
+    {
+        var result = WpfMessageBox.Show(
+            "選定タブの選択状態と入力内容をリセットします。よろしいですか？",
+            "リセット確認",
+            MessageBoxButton.YesNo,
+            MessageBoxImage.Question);
+        if (result != MessageBoxResult.Yes)
+        {
+            return;
+        }
+
+        ResetSelectionStateCore();
+    }
+
+    [RelayCommand]
+    private void ApplySelectionStateHistory()
+    {
+        if (SelectedSelectionStateHistoryEntry == null)
+        {
+            WpfMessageBox.Show("呼び出す履歴を選択してください。", "情報", MessageBoxButton.OK, MessageBoxImage.Information);
+            return;
+        }
+
+        ApplySelectionStateHistoryCore(SelectedSelectionStateHistoryEntry);
+    }
+
+    [RelayCommand]
     private void AddCustomTab()
     {
         var requestedName = string.IsNullOrWhiteSpace(NewCustomTabName)
@@ -694,7 +766,7 @@ public partial class MainViewModel : ObservableObject
         SelectedCustomTab.Changed -= OnCustomTabChanged;
         var removeTarget = SelectedCustomTab;
         CustomTabs.Remove(removeTarget);
-        _customZipPlans.Remove(removedTabName);
+        _customZipPlans.RemoveAll(plan => plan.TabName.Equals(removedTabName, StringComparison.OrdinalIgnoreCase));
         SelectedCustomTab = CustomTabs.LastOrDefault();
         UpdateBasket();
         PersistCustomState();
@@ -725,10 +797,16 @@ public partial class MainViewModel : ObservableObject
         SelectedCustomTab.Name = requestedName;
         SelectedCustomTab.ColumnsInput = NewCustomTabColumns ?? string.Empty;
         SelectedCustomTab.ApplyColumnsFromInput();
-        if (!previousName.Equals(requestedName, StringComparison.OrdinalIgnoreCase) &&
-            _customZipPlans.Remove(previousName, out var existingPlan))
+        if (!previousName.Equals(requestedName, StringComparison.OrdinalIgnoreCase))
         {
-            _customZipPlans[requestedName] = existingPlan with { TabName = requestedName };
+            for (var index = 0; index < _customZipPlans.Count; index++)
+            {
+                var plan = _customZipPlans[index];
+                if (plan.TabName.Equals(previousName, StringComparison.OrdinalIgnoreCase))
+                {
+                    _customZipPlans[index] = plan with { TabName = requestedName };
+                }
+            }
         }
         UpdateBasket();
         PersistCustomState();
@@ -1099,6 +1177,73 @@ public partial class MainViewModel : ObservableObject
         }
     }
 
+    public bool ToggleRedownloadForBasketItem(BasketItemViewModel? item)
+    {
+        if (item == null || item.IsMissing)
+        {
+            return false;
+        }
+
+        var destinationPaths = ResolveDestinationPathsForBasketItem(item)
+            .Where(path => !string.IsNullOrWhiteSpace(path))
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .ToList();
+        if (destinationPaths.Count == 0)
+        {
+            return false;
+        }
+
+        var shouldUnlock = destinationPaths.Any(path => !_redownloadUnlockedDestinationPaths.Contains(path));
+        foreach (var destinationPath in destinationPaths)
+        {
+            if (shouldUnlock)
+            {
+                _redownloadUnlockedDestinationPaths.Add(destinationPath);
+            }
+            else
+            {
+                _redownloadUnlockedDestinationPaths.Remove(destinationPath);
+            }
+        }
+
+        UpdateBasket();
+        return true;
+    }
+
+    public bool ToggleRedownloadForModule(ModuleRowViewModel? module)
+    {
+        if (module == null || SelectedVersion == null)
+        {
+            return false;
+        }
+
+        var helixLabel = NormalizeHelixVersionLabel(SelectedVersion.Version);
+        var destinationPaths = GetDestinationPathsForModuleSelection(helixLabel, module)
+            .Where(path => !string.IsNullOrWhiteSpace(path))
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .ToList();
+        if (destinationPaths.Count == 0)
+        {
+            return false;
+        }
+
+        var shouldUnlock = destinationPaths.Any(path => !_redownloadUnlockedDestinationPaths.Contains(path));
+        foreach (var destinationPath in destinationPaths)
+        {
+            if (shouldUnlock)
+            {
+                _redownloadUnlockedDestinationPaths.Add(destinationPath);
+            }
+            else
+            {
+                _redownloadUnlockedDestinationPaths.Remove(destinationPath);
+            }
+        }
+
+        UpdateBasket();
+        return true;
+    }
+
     [RelayCommand]
     private async Task QueueAddAsync()
     {
@@ -1128,12 +1273,25 @@ public partial class MainViewModel : ObservableObject
         var outputRoot = OutputFolderPreview;
         Directory.CreateDirectory(outputRoot);
 
-        var selectedTransferItems = BasketItems.Where(b => !b.IsMissing && !IsCustomZipSummaryItem(b)).ToList();
+        var selectedTransferItems = BasketItems
+            .Where(b => !b.IsMissing && !IsCustomZipSummaryItem(b) && !b.IsAlreadyDownloaded)
+            .ToList();
+        var alreadyDownloaded = BasketItems
+            .Where(b => !b.IsMissing && !IsCustomZipSummaryItem(b) && b.IsAlreadyDownloaded)
+            .ToList();
         var missing = BasketItems.Where(b => b.IsMissing && !IsCustomZipSummaryItem(b)).ToList();
         var hasZipPlans = _customZipPlans.Count > 0;
         if (missing.Count > 0)
         {
             WpfMessageBox.Show($"{missing.Count} 件の配布物が未検出です。", "Missing", MessageBoxButton.OK, MessageBoxImage.Warning);
+        }
+        if (alreadyDownloaded.Count > 0)
+        {
+            WpfMessageBox.Show(
+                $"{alreadyDownloaded.Count} 件は既にダウンロード済みのため、今回のキューから除外します。\n再ダウンロードしたい場合は、選定タブで対象行をダブルクリックして解除してください。",
+                "既存ダウンロードを除外",
+                MessageBoxButton.OK,
+                MessageBoxImage.Information);
         }
         if (selectedTransferItems.Count == 0 && !hasZipPlans)
         {
@@ -1207,6 +1365,7 @@ public partial class MainViewModel : ObservableObject
         }
 
         await ExecuteCustomZipPlansAsync(outputRoot);
+        SaveCurrentSelectionStateToHistory();
 
         TransferSummary.Update(TransferItems, MaxConcurrentTransfers);
         SelectedMainTabIndex = TransferTabIndex;
@@ -1254,7 +1413,9 @@ public partial class MainViewModel : ObservableObject
 
         var created = 0;
         var skipped = 0;
+        var skippedAlreadyDownloaded = 0;
         var errors = new List<string>();
+        var usedArchiveBaseNames = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
 
         foreach (var plan in plans)
         {
@@ -1269,8 +1430,16 @@ public partial class MainViewModel : ObservableObject
 
             try
             {
-                var safeArchiveName = GetSafeArchiveBaseName(plan.ArchiveBaseName, plan.TabName);
+                var requestedArchiveName = GetSafeArchiveBaseName(plan.ArchiveBaseName, plan.TabName);
+                var safeArchiveName = GetUniqueArchiveBaseName(requestedArchiveName, usedArchiveBaseNames);
                 var zipPath = Path.Combine(outputRoot, $"{safeArchiveName}.zip");
+
+                if (IsDestinationAlreadyDownloaded(zipPath))
+                {
+                    skippedAlreadyDownloaded++;
+                    continue;
+                }
+
                 await Task.Run(() => CreateCustomZipArchive(zipPath, rows));
                 created++;
             }
@@ -1295,6 +1464,11 @@ public partial class MainViewModel : ObservableObject
             lines.Add($"スキップ(存在ファイルなし): {skipped} 件");
         }
 
+        if (skippedAlreadyDownloaded > 0)
+        {
+            lines.Add($"スキップ(既にDL済み): {skippedAlreadyDownloaded} 件");
+        }
+
         if (errors.Count > 0)
         {
             lines.Add($"失敗: {errors.Count} 件");
@@ -1315,6 +1489,26 @@ public partial class MainViewModel : ObservableObject
         var invalidChars = Path.GetInvalidFileNameChars();
         var sanitized = new string(candidate.Select(ch => invalidChars.Contains(ch) ? '_' : ch).ToArray()).Trim();
         return string.IsNullOrWhiteSpace(sanitized) ? "custom" : sanitized;
+    }
+
+    private static string GetUniqueArchiveBaseName(string requestedName, ISet<string> usedNames)
+    {
+        if (usedNames.Add(requestedName))
+        {
+            return requestedName;
+        }
+
+        var index = 2;
+        while (true)
+        {
+            var candidate = $"{requestedName} ({index})";
+            if (usedNames.Add(candidate))
+            {
+                return candidate;
+            }
+
+            index++;
+        }
     }
 
     private static void CreateCustomZipArchive(string zipPath, IReadOnlyList<CustomZipPlanItem> rows)
@@ -1703,6 +1897,11 @@ public partial class MainViewModel : ObservableObject
 
     private void OnCustomTabChanged(object? sender, EventArgs e)
     {
+        if (_isApplyingSelectionHistory)
+        {
+            return;
+        }
+
         UpdateBasket();
         PersistCustomState();
     }
@@ -1755,6 +1954,312 @@ public partial class MainViewModel : ObservableObject
             .Where(path => !string.IsNullOrWhiteSpace(path))
             .Distinct(StringComparer.OrdinalIgnoreCase)
             .ToList();
+    }
+
+    private void LoadSelectionStateHistoryFromSettings()
+    {
+        var normalized = (Settings.SelectionStateHistory ?? new List<SelectionStateHistoryEntry>())
+            .Where(entry => entry != null)
+            .OrderByDescending(entry => entry.SavedAtUtc)
+            .Take(SelectionHistoryLimit)
+            .ToList();
+
+        foreach (var entry in normalized)
+        {
+            entry.DisplayName = string.IsNullOrWhiteSpace(entry.DisplayName)
+                ? BuildSelectionStateDisplayName(entry)
+                : entry.DisplayName;
+            entry.SelectedModules ??= new List<SelectionModuleState>();
+            entry.SelectedScanItems ??= new List<SelectionScanState>();
+            entry.SelectedCustomTabs ??= new List<SelectionCustomTabState>();
+            entry.CustomZipPlans ??= new List<CustomZipPlan>();
+        }
+
+        Settings.SelectionStateHistory = normalized;
+
+        SelectionStateHistoryEntries.Clear();
+        foreach (var entry in normalized)
+        {
+            SelectionStateHistoryEntries.Add(entry);
+        }
+
+        if (SelectedSelectionStateHistoryEntry != null)
+        {
+            var restored = SelectionStateHistoryEntries.FirstOrDefault(item =>
+                item.SavedAtUtc == SelectedSelectionStateHistoryEntry.SavedAtUtc &&
+                item.DisplayName.Equals(SelectedSelectionStateHistoryEntry.DisplayName, StringComparison.Ordinal));
+            if (restored != null)
+            {
+                SelectedSelectionStateHistoryEntry = restored;
+                return;
+            }
+        }
+
+        SelectedSelectionStateHistoryEntry = SelectionStateHistoryEntries.FirstOrDefault();
+    }
+
+    private void SaveCurrentSelectionStateToHistory()
+    {
+        var snapshot = CreateCurrentSelectionStateHistoryEntry();
+        var history = Settings.SelectionStateHistory ?? new List<SelectionStateHistoryEntry>();
+        history.Insert(0, snapshot);
+        if (history.Count > SelectionHistoryLimit)
+        {
+            history.RemoveRange(SelectionHistoryLimit, history.Count - SelectionHistoryLimit);
+        }
+
+        Settings.SelectionStateHistory = history;
+        _settingsService.Save(Settings);
+        LoadSelectionStateHistoryFromSettings();
+    }
+
+    private SelectionStateHistoryEntry CreateCurrentSelectionStateHistoryEntry()
+    {
+        var selectedModules = HelixVersions
+            .SelectMany(helix => helix.Modules
+                .Where(module => module.IsSelected)
+                .Select(module => new SelectionModuleState
+                {
+                    HelixVersion = helix.Version,
+                    Code = module.Code,
+                    OsSelection = module.OsSelection,
+                    SelectedInstallerVersion = module.SelectedInstallerVersion
+                }))
+            .ToList();
+
+        var selectedScanItems = ScanSelectionItems
+            .Where(item => item.IsSelected)
+            .Select(item => new SelectionScanState
+            {
+                SourcePath = item.SourcePath,
+                Code = item.Code,
+                Version = item.Version,
+                Os = item.Os.ToString()
+            })
+            .ToList();
+
+        var selectedCustomTabs = CustomTabs
+            .Select(tab => new SelectionCustomTabState
+            {
+                TabName = tab.Name,
+                SelectedSourcePaths = tab.GetSelectedFiles()
+                    .Select(file => file.SourcePath)
+                    .Where(path => !string.IsNullOrWhiteSpace(path))
+                    .Distinct(StringComparer.OrdinalIgnoreCase)
+                    .ToList()
+            })
+            .Where(tab => tab.SelectedSourcePaths.Count > 0)
+            .ToList();
+
+        var snapshot = new SelectionStateHistoryEntry
+        {
+            SavedAtUtc = DateTime.UtcNow,
+            CompanyName = CompanyName?.Trim() ?? string.Empty,
+            MemoText = MemoText ?? string.Empty,
+            SearchText = SearchText ?? string.Empty,
+            SelectedVersion = SelectedVersion?.Version ?? string.Empty,
+            SelectedModules = selectedModules,
+            SelectedScanItems = selectedScanItems,
+            SelectedCustomTabs = selectedCustomTabs,
+            CustomZipPlans = GetCustomZipPlans().ToList()
+        };
+        snapshot.DisplayName = BuildSelectionStateDisplayName(snapshot);
+        return snapshot;
+    }
+
+    private static string BuildSelectionStateDisplayName(SelectionStateHistoryEntry entry)
+    {
+        var localTime = entry.SavedAtUtc == default
+            ? DateTime.Now
+            : entry.SavedAtUtc.ToLocalTime();
+        var company = string.IsNullOrWhiteSpace(entry.CompanyName) ? "会社名未設定" : entry.CompanyName;
+        var version = string.IsNullOrWhiteSpace(entry.SelectedVersion) ? "バージョン未選択" : entry.SelectedVersion;
+        return $"{localTime:MM/dd HH:mm} | {company} | {version}";
+    }
+
+    private void ApplySelectionStateHistoryCore(SelectionStateHistoryEntry entry)
+    {
+        _isApplyingSelectionHistory = true;
+        try
+        {
+            ResetSelectionStateCore(clearContextInputs: false);
+
+            SearchText = entry.SearchText ?? string.Empty;
+            CompanyName = entry.CompanyName ?? string.Empty;
+            MemoText = entry.MemoText ?? string.Empty;
+            QuickRequestResult = string.Empty;
+            UnresolvedTerms.Clear();
+            AmbiguousTerms.Clear();
+
+            if (!string.IsNullOrWhiteSpace(entry.SelectedVersion))
+            {
+                SelectedVersion = HelixVersions.FirstOrDefault(helix =>
+                                     helix.Version.Equals(entry.SelectedVersion, StringComparison.OrdinalIgnoreCase))
+                                 ?? HelixVersions.FirstOrDefault(helix =>
+                                     NormalizeHelixVersionLabel(helix.Version)
+                                         .Equals(NormalizeHelixVersionLabel(entry.SelectedVersion), StringComparison.OrdinalIgnoreCase));
+            }
+
+            foreach (var state in entry.SelectedModules ?? new List<SelectionModuleState>())
+            {
+                var helix = HelixVersions.FirstOrDefault(item =>
+                    NormalizeHelixVersionLabel(item.Version)
+                        .Equals(NormalizeHelixVersionLabel(state.HelixVersion), StringComparison.OrdinalIgnoreCase));
+                if (helix == null)
+                {
+                    continue;
+                }
+
+                var module = helix.Modules.FirstOrDefault(item =>
+                    item.Code.Equals(state.Code, StringComparison.OrdinalIgnoreCase));
+                if (module == null || !module.IsEnabled)
+                {
+                    continue;
+                }
+
+                if (!string.IsNullOrWhiteSpace(state.SelectedInstallerVersion) &&
+                    module.InstallerVersionOptions.Any(version =>
+                        version.Equals(state.SelectedInstallerVersion, StringComparison.OrdinalIgnoreCase)))
+                {
+                    module.SetSelectedInstallerVersionSilently(state.SelectedInstallerVersion);
+                }
+
+                module.SetOsSelectionSilently(NormalizeOsSelectionForRestore(state.OsSelection, module));
+                module.SetSelectedSilently(true);
+            }
+
+            var selectedScanItems = ResolveSelectedScanItems(entry.SelectedScanItems ?? new List<SelectionScanState>());
+            WithSelectionSyncSuppressed(() =>
+            {
+                foreach (var item in ScanSelectionItems)
+                {
+                    item.IsSelected = selectedScanItems.Contains(item);
+                }
+            });
+
+            var selectedPathsByTab = (entry.SelectedCustomTabs ?? new List<SelectionCustomTabState>())
+                .Where(tab => !string.IsNullOrWhiteSpace(tab.TabName))
+                .ToDictionary(
+                    tab => tab.TabName,
+                    tab => tab.SelectedSourcePaths ?? new List<string>(),
+                    StringComparer.OrdinalIgnoreCase);
+
+            foreach (var tab in CustomTabs)
+            {
+                if (selectedPathsByTab.TryGetValue(tab.Name, out var selectedPaths))
+                {
+                    tab.SetSelectedByPaths(selectedPaths);
+                }
+                else
+                {
+                    tab.ClearSelection();
+                }
+            }
+
+            SetCustomZipPlans(entry.CustomZipPlans ?? new List<CustomZipPlan>());
+            _uploadListUserEdited = false;
+            UpdateBasket();
+            PersistCustomState();
+        }
+        finally
+        {
+            _isApplyingSelectionHistory = false;
+        }
+    }
+
+    private void ResetSelectionStateCore(bool clearContextInputs = true)
+    {
+        _isApplyingSelectionHistory = true;
+        try
+        {
+            WithSelectionSyncSuppressed(() =>
+            {
+                foreach (var helix in HelixVersions)
+                {
+                    foreach (var module in helix.Modules)
+                    {
+                        module.SetSelectedSilently(false);
+                    }
+                }
+
+                foreach (var item in ScanSelectionItems)
+                {
+                    item.IsSelected = false;
+                }
+            });
+
+            foreach (var tab in CustomTabs)
+            {
+                tab.ClearSelection();
+            }
+
+            _redownloadUnlockedDestinationPaths.Clear();
+            _customZipPlans.Clear();
+            ClearManualPicks();
+            UnresolvedTerms.Clear();
+            AmbiguousTerms.Clear();
+            QuickRequestResult = string.Empty;
+
+            if (clearContextInputs)
+            {
+                SearchText = string.Empty;
+                MemoText = string.Empty;
+                CompanyName = string.Empty;
+            }
+
+            _uploadListUserEdited = false;
+            UploadListText = string.Empty;
+            UpdateBasket();
+            PersistCustomState();
+        }
+        finally
+        {
+            _isApplyingSelectionHistory = false;
+        }
+    }
+
+    private static string NormalizeOsSelectionForRestore(string osSelection, ModuleRowViewModel module)
+    {
+        if (osSelection.Equals(ModuleRowViewModel.OsSelectionWindows, StringComparison.OrdinalIgnoreCase))
+        {
+            return ModuleRowViewModel.OsSelectionWindows;
+        }
+
+        if (osSelection.Equals(ModuleRowViewModel.OsSelectionLinux, StringComparison.OrdinalIgnoreCase))
+        {
+            return ModuleRowViewModel.OsSelectionLinux;
+        }
+
+        if (osSelection.Equals(ModuleRowViewModel.OsSelectionBoth, StringComparison.OrdinalIgnoreCase))
+        {
+            return ModuleRowViewModel.OsSelectionBoth;
+        }
+
+        return GetDefaultOsSelection(GetAvailableOsTypesFromDisplay(module.OsDisplay));
+    }
+
+    private HashSet<ScanSelectionItemViewModel> ResolveSelectedScanItems(IEnumerable<SelectionScanState> states)
+    {
+        var selected = new HashSet<ScanSelectionItemViewModel>();
+        foreach (var state in states)
+        {
+            var match = !string.IsNullOrWhiteSpace(state.SourcePath)
+                ? ScanSelectionItems.FirstOrDefault(item =>
+                    item.SourcePath.Equals(state.SourcePath, StringComparison.OrdinalIgnoreCase))
+                : null;
+
+            match ??= ScanSelectionItems.FirstOrDefault(item =>
+                item.Code.Equals(state.Code, StringComparison.OrdinalIgnoreCase) &&
+                item.Version.Equals(state.Version, StringComparison.OrdinalIgnoreCase) &&
+                item.Os.ToString().Equals(state.Os, StringComparison.OrdinalIgnoreCase));
+
+            if (match != null)
+            {
+                selected.Add(match);
+            }
+        }
+
+        return selected;
     }
 
     private void RestoreCustomStateFromSettings()
@@ -1949,7 +2454,9 @@ public partial class MainViewModel : ObservableObject
         return columnName.Equals(CustomTabViewModel.SelectColumnName, StringComparison.OrdinalIgnoreCase)
                || columnName.Equals(CustomTabViewModel.FolderColumnName, StringComparison.OrdinalIgnoreCase)
                || columnName.Equals(CustomTabViewModel.FileNameColumnName, StringComparison.OrdinalIgnoreCase)
-               || columnName.Equals(CustomTabViewModel.SourcePathColumnName, StringComparison.OrdinalIgnoreCase);
+               || columnName.Equals(CustomTabViewModel.SourcePathColumnName, StringComparison.OrdinalIgnoreCase)
+               || columnName.Equals(CustomTabViewModel.SelectionEnabledColumnName, StringComparison.OrdinalIgnoreCase)
+               || columnName.Equals(CustomTabViewModel.SelectionLockReasonColumnName, StringComparison.OrdinalIgnoreCase);
     }
 
     private static string ToStringValue(object? value)
@@ -1980,10 +2487,19 @@ public partial class MainViewModel : ObservableObject
         return string.IsNullOrWhiteSpace(folder) ? "-" : folder;
     }
 
+    private sealed class ModuleDownloadSelectionState
+    {
+        public int ResolvedAssetCount { get; set; }
+        public int AlreadyDownloadedCount { get; set; }
+    }
+
     private void UpdateBasket()
     {
         BasketItems.Clear();
         var selectedSourcePaths = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        var moduleDownloadStates = new Dictionary<ModuleRowViewModel, ModuleDownloadSelectionState>();
+        var customTabLockedPaths = new Dictionary<CustomTabViewModel, HashSet<string>>();
+        ResetModuleDownloadLocks();
 
         if (HelixVersions.Count > 0)
         {
@@ -1995,7 +2511,7 @@ public partial class MainViewModel : ObservableObject
                 var helixLabel = NormalizeHelixVersionLabel(helix.Version);
                 foreach (var module in helix.Modules.Where(m => m.IsSelected))
                 {
-                    AddBasketItemsForModule(helixLabel, module, existingKeys, missingKeys);
+                    AddBasketItemsForModule(helixLabel, module, existingKeys, missingKeys, moduleDownloadStates);
                 }
             }
 
@@ -2025,6 +2541,18 @@ public partial class MainViewModel : ObservableObject
                     continue;
                 }
 
+                var destinationPath = TryBuildBasketDestinationPath(helixLabel, pick.Asset.FileName);
+                var isAlreadyDownloaded = IsDestinationAlreadyDownloaded(destinationPath);
+                var manualReason = string.IsNullOrWhiteSpace(pick.Reason)
+                    ? string.Empty
+                    : pick.Reason;
+                if (isAlreadyDownloaded)
+                {
+                    manualReason = string.IsNullOrWhiteSpace(manualReason)
+                        ? AlreadyDownloadedReason
+                        : $"{manualReason} / {AlreadyDownloadedReason}";
+                }
+
                 BasketItems.Add(new BasketItemViewModel(
                     helixLabel,
                     pick.Code,
@@ -2035,14 +2563,18 @@ public partial class MainViewModel : ObservableObject
                     pick.Asset.FileName,
                     pick.Asset.SourcePath,
                     false,
-                    pick.Reason,
-                    true));
+                    manualReason,
+                    true,
+                    isAlreadyDownloaded,
+                    destinationPath));
             }
         }
         else if (ScanSelectionItems.Count > 0)
         {
             foreach (var item in ScanSelectionItems.Where(item => item.IsSelected))
             {
+                var destinationPath = TryBuildBasketDestinationPath(ScanOnlyVersionLabel, item.AssetFileName);
+                var isAlreadyDownloaded = IsDestinationAlreadyDownloaded(destinationPath);
                 BasketItems.Add(new BasketItemViewModel(
                     ScanOnlyVersionLabel,
                     item.Code,
@@ -2053,8 +2585,10 @@ public partial class MainViewModel : ObservableObject
                     item.AssetFileName,
                     item.SourcePath,
                     false,
-                    string.Empty,
-                    false));
+                    isAlreadyDownloaded ? AlreadyDownloadedReason : string.Empty,
+                    false,
+                    isAlreadyDownloaded,
+                    destinationPath));
             }
         }
 
@@ -2066,20 +2600,66 @@ public partial class MainViewModel : ObservableObject
             }
         }
 
-        AddCustomTabBasketItems(selectedSourcePaths);
+        AddCustomTabBasketItems(selectedSourcePaths, customTabLockedPaths);
+        ApplyModuleDownloadLockStates(moduleDownloadStates);
+        ApplyCustomTabDownloadLockStates(customTabLockedPaths);
         UpdateUploadListText();
     }
 
-    private void AddCustomTabBasketItems(HashSet<string> selectedSourcePaths)
+    private void ResetModuleDownloadLocks()
     {
-        var rawZipPlansByTab = GetCustomZipPlans()
-            .Where(plan => !string.IsNullOrWhiteSpace(plan.TabName))
-            .ToDictionary(plan => plan.TabName, StringComparer.OrdinalIgnoreCase);
+        foreach (var module in HelixVersions.SelectMany(helix => helix.Modules))
+        {
+            module.SetDownloadState(false, false, string.Empty);
+        }
+    }
+
+    private void ApplyModuleDownloadLockStates(
+        IReadOnlyDictionary<ModuleRowViewModel, ModuleDownloadSelectionState> moduleDownloadStates)
+    {
+        foreach (var module in HelixVersions.SelectMany(helix => helix.Modules))
+        {
+            if (!module.IsSelected)
+            {
+                module.SetDownloadState(false, false, string.Empty);
+                continue;
+            }
+
+            if (!moduleDownloadStates.TryGetValue(module, out var state) || state.ResolvedAssetCount == 0)
+            {
+                module.SetDownloadState(false, false, string.Empty);
+                continue;
+            }
+
+            var hasDownloaded = state.AlreadyDownloadedCount > 0;
+            var shouldLock = state.AlreadyDownloadedCount >= state.ResolvedAssetCount;
+            var reason = shouldLock
+                ? AlreadyDownloadedReason
+                : hasDownloaded
+                    ? "一部が既にダウンロード済み"
+                    : string.Empty;
+            module.SetDownloadState(hasDownloaded, shouldLock, reason);
+        }
+    }
+
+    private void AddCustomTabBasketItems(
+        HashSet<string> selectedSourcePaths,
+        IDictionary<CustomTabViewModel, HashSet<string>> customTabLockedPaths)
+    {
+        var rawZipPlans = GetCustomZipPlans()
+            .Where(plan => !string.IsNullOrWhiteSpace(plan.TabName) && !string.IsNullOrWhiteSpace(plan.ArchiveBaseName))
+            .ToList();
         var effectiveZipPlans = new List<CustomZipPlan>();
         var zippedSourcePaths = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
 
         foreach (var tab in CustomTabs)
         {
+            if (!customTabLockedPaths.TryGetValue(tab, out var tabLockedPaths))
+            {
+                tabLockedPaths = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+                customTabLockedPaths[tab] = tabLockedPaths;
+            }
+
             var selectedFiles = tab.GetSelectedFiles()
                 .Where(file => !string.IsNullOrWhiteSpace(file.SourcePath))
                 .ToList();
@@ -2087,7 +2667,10 @@ public partial class MainViewModel : ObservableObject
                 .Select(file => file.SourcePath)
                 .ToHashSet(StringComparer.OrdinalIgnoreCase);
 
-            if (rawZipPlansByTab.TryGetValue(tab.Name, out var rawZipPlan))
+            var rawZipPlansForTab = rawZipPlans
+                .Where(plan => plan.TabName.Equals(tab.Name, StringComparison.OrdinalIgnoreCase))
+                .ToList();
+            foreach (var rawZipPlan in rawZipPlansForTab)
             {
                 var planItems = rawZipPlan.Items
                     .Where(item => selectedFilePaths.Contains(item.SourcePath))
@@ -2103,6 +2686,19 @@ public partial class MainViewModel : ObservableObject
                     }
 
                     var zipFileName = $"{zipPlan.ArchiveBaseName}.zip";
+                    var zipDestinationPath = string.IsNullOrWhiteSpace(OutputFolderPreview)
+                        ? string.Empty
+                        : Path.Combine(OutputFolderPreview, zipFileName);
+                    var zipAlreadyDownloaded = IsDestinationAlreadyDownloaded(zipDestinationPath);
+                    if (zipAlreadyDownloaded)
+                    {
+                        foreach (var item in planItems)
+                        {
+                            tabLockedPaths.Add(item.SourcePath);
+                        }
+                    }
+
+                    var summarySourcePath = BuildCustomZipPlanSourcePath(zipPlan.TabName, zipPlan.ArchiveBaseName);
                     BasketItems.Add(new BasketItemViewModel(
                         $"{CustomTabLabelPrefix}{tab.Name}",
                         CustomZipSummaryCode,
@@ -2111,10 +2707,12 @@ public partial class MainViewModel : ObservableObject
                         "-",
                         "-",
                         zipFileName,
-                        string.Empty,
+                        summarySourcePath,
                         false,
-                        "キュー追加時に自動圧縮",
-                        true));
+                        zipAlreadyDownloaded ? AlreadyDownloadedReason : "キュー追加時に自動圧縮",
+                        true,
+                        zipAlreadyDownloaded,
+                        zipDestinationPath));
                 }
             }
 
@@ -2131,13 +2729,28 @@ public partial class MainViewModel : ObservableObject
                 }
 
                 var exists = File.Exists(file.SourcePath);
+                var customHelixLabel = $"{CustomTabLabelPrefix}{tab.Name}";
+                var destinationPath = TryBuildBasketDestinationPath(customHelixLabel, file.FileName);
+                var isAlreadyDownloaded = exists && IsDestinationAlreadyDownloaded(destinationPath);
+                if (isAlreadyDownloaded)
+                {
+                    tabLockedPaths.Add(file.SourcePath);
+                }
+
                 var os = GuessOsFromPath(file.SourcePath).ToString();
                 var details = string.Join(" / ", file.ColumnValues
                     .Where(pair => !string.IsNullOrWhiteSpace(pair.Value))
                     .Select(pair => $"{pair.Key}={pair.Value}"));
+                var reason = exists ? details : "ファイルが存在しません";
+                if (isAlreadyDownloaded)
+                {
+                    reason = string.IsNullOrWhiteSpace(reason)
+                        ? AlreadyDownloadedReason
+                        : $"{reason} / {AlreadyDownloadedReason}";
+                }
 
                 BasketItems.Add(new BasketItemViewModel(
-                    $"{CustomTabLabelPrefix}{tab.Name}",
+                    customHelixLabel,
                     "CUSTOM",
                     file.FileName,
                     "-",
@@ -2146,19 +2759,37 @@ public partial class MainViewModel : ObservableObject
                     file.FileName,
                     file.SourcePath,
                     !exists,
-                    exists ? details : "ファイルが存在しません",
-                    true));
+                    reason,
+                    true,
+                    isAlreadyDownloaded,
+                    destinationPath));
             }
         }
 
         SetCustomZipPlans(effectiveZipPlans);
     }
 
+    private void ApplyCustomTabDownloadLockStates(IDictionary<CustomTabViewModel, HashSet<string>> customTabLockedPaths)
+    {
+        foreach (var tab in CustomTabs)
+        {
+            if (customTabLockedPaths.TryGetValue(tab, out var lockedPaths))
+            {
+                tab.SetDownloadLockByPaths(lockedPaths, AlreadyDownloadedReason);
+            }
+            else
+            {
+                tab.SetDownloadLockByPaths(Array.Empty<string>(), string.Empty);
+            }
+        }
+    }
+
     private void AddBasketItemsForModule(
         string helixVersion,
         ModuleRowViewModel module,
         HashSet<string> existingKeys,
-        HashSet<string> missingKeys)
+        HashSet<string> missingKeys,
+        IDictionary<ModuleRowViewModel, ModuleDownloadSelectionState> moduleDownloadStates)
     {
         var requestedVersion = GetRequestedVersion(module);
         var selectedOsTypes = GetSelectedOsTypes(module.OsSelection);
@@ -2166,6 +2797,8 @@ public partial class MainViewModel : ObservableObject
         {
             selectedOsTypes = new List<OsType> { OsType.Windows, OsType.Linux };
         }
+
+        var moduleState = GetOrCreateModuleDownloadSelectionState(moduleDownloadStates, module);
 
         foreach (var osType in selectedOsTypes)
         {
@@ -2198,6 +2831,14 @@ public partial class MainViewModel : ObservableObject
                 continue;
             }
 
+            var destinationPath = TryBuildBasketDestinationPath(helixVersion, asset.FileName);
+            var isAlreadyDownloaded = IsDestinationAlreadyDownloaded(destinationPath);
+            moduleState.ResolvedAssetCount++;
+            if (isAlreadyDownloaded)
+            {
+                moduleState.AlreadyDownloadedCount++;
+            }
+
             BasketItems.Add(new BasketItemViewModel(
                 helixVersion,
                 module.Code,
@@ -2208,8 +2849,78 @@ public partial class MainViewModel : ObservableObject
                 asset.FileName,
                 asset.SourcePath,
                 false,
-                string.Empty,
-                false));
+                isAlreadyDownloaded ? AlreadyDownloadedReason : string.Empty,
+                false,
+                isAlreadyDownloaded,
+                destinationPath));
+        }
+    }
+
+    private static ModuleDownloadSelectionState GetOrCreateModuleDownloadSelectionState(
+        IDictionary<ModuleRowViewModel, ModuleDownloadSelectionState> states,
+        ModuleRowViewModel module)
+    {
+        if (states.TryGetValue(module, out var state))
+        {
+            return state;
+        }
+
+        state = new ModuleDownloadSelectionState();
+        states[module] = state;
+        return state;
+    }
+
+    private IEnumerable<string> ResolveDestinationPathsForBasketItem(BasketItemViewModel item)
+    {
+        if (!string.IsNullOrWhiteSpace(item.DestinationPath))
+        {
+            yield return item.DestinationPath;
+            yield break;
+        }
+
+        if (IsCustomZipSummaryItem(item))
+        {
+            if (!string.IsNullOrWhiteSpace(OutputFolderPreview) &&
+                !string.IsNullOrWhiteSpace(item.AssetFileName))
+            {
+                yield return Path.Combine(OutputFolderPreview, item.AssetFileName);
+            }
+
+            yield break;
+        }
+
+        if (!string.IsNullOrWhiteSpace(item.AssetFileName))
+        {
+            var path = TryBuildBasketDestinationPath(item.HelixVersion, item.AssetFileName);
+            if (!string.IsNullOrWhiteSpace(path))
+            {
+                yield return path;
+            }
+        }
+    }
+
+    private IEnumerable<string> GetDestinationPathsForModuleSelection(string helixVersion, ModuleRowViewModel module)
+    {
+        var requestedVersion = GetRequestedVersion(module);
+        var selectedOsTypes = GetSelectedOsTypes(module.OsSelection);
+        if (selectedOsTypes.Count == 0)
+        {
+            selectedOsTypes = new List<OsType> { OsType.Windows, OsType.Linux };
+        }
+
+        foreach (var osType in selectedOsTypes)
+        {
+            var asset = FindLogicalAsset(module.Code, requestedVersion, osType, out _);
+            if (asset == null)
+            {
+                continue;
+            }
+
+            var destinationPath = TryBuildBasketDestinationPath(helixVersion, asset.FileName);
+            if (!string.IsNullOrWhiteSpace(destinationPath))
+            {
+                yield return destinationPath;
+            }
         }
     }
 
@@ -2332,13 +3043,27 @@ public partial class MainViewModel : ObservableObject
             return false;
         }
 
-        var tabName = TryExtractCustomTabName(item.HelixVersion);
-        if (string.IsNullOrWhiteSpace(tabName))
+        var removed = 0;
+        if (TryParseCustomZipPlanSourcePath(item.SourcePath, out var tabName, out var archiveBaseName))
         {
-            return false;
+            removed = _customZipPlans.RemoveAll(plan =>
+                plan.TabName.Equals(tabName, StringComparison.OrdinalIgnoreCase) &&
+                plan.ArchiveBaseName.Equals(archiveBaseName, StringComparison.OrdinalIgnoreCase));
+        }
+        else
+        {
+            tabName = TryExtractCustomTabName(item.HelixVersion);
+            if (!string.IsNullOrWhiteSpace(tabName))
+            {
+                removed = _customZipPlans.RemoveAll(plan =>
+                    plan.TabName.Equals(tabName, StringComparison.OrdinalIgnoreCase) &&
+                    plan.ArchiveBaseName.Equals(
+                        Path.GetFileNameWithoutExtension(item.AssetFileName ?? string.Empty),
+                        StringComparison.OrdinalIgnoreCase));
+            }
         }
 
-        if (_customZipPlans.Remove(tabName))
+        if (removed > 0)
         {
             UpdateBasket();
             PersistCustomState();
@@ -2549,6 +3274,68 @@ public partial class MainViewModel : ObservableObject
         return item.Code.Equals(CustomZipSummaryCode, StringComparison.OrdinalIgnoreCase);
     }
 
+    private static string BuildCustomZipPlanStorageKey(string tabName, string archiveBaseName)
+    {
+        return $"{tabName.Trim()}\u001F{archiveBaseName.Trim()}";
+    }
+
+    private static bool TryParseCustomZipPlanStorageKey(string key, out string tabName, out string archiveBaseName)
+    {
+        tabName = string.Empty;
+        archiveBaseName = string.Empty;
+        if (string.IsNullOrWhiteSpace(key))
+        {
+            return false;
+        }
+
+        var parts = key.Split('\u001F');
+        if (parts.Length != 2)
+        {
+            return false;
+        }
+
+        tabName = parts[0];
+        archiveBaseName = parts[1];
+        return !string.IsNullOrWhiteSpace(tabName) && !string.IsNullOrWhiteSpace(archiveBaseName);
+    }
+
+    private static string BuildCustomZipPlanSourcePath(string tabName, string archiveBaseName)
+    {
+        return $"customzip://{Uri.EscapeDataString(tabName.Trim())}/{Uri.EscapeDataString(archiveBaseName.Trim())}";
+    }
+
+    private static bool TryParseCustomZipPlanSourcePath(string? sourcePath, out string tabName, out string archiveBaseName)
+    {
+        tabName = string.Empty;
+        archiveBaseName = string.Empty;
+        if (string.IsNullOrWhiteSpace(sourcePath))
+        {
+            return false;
+        }
+
+        if (!Uri.TryCreate(sourcePath, UriKind.Absolute, out var uri))
+        {
+            return false;
+        }
+
+        if (!uri.Scheme.Equals("customzip", StringComparison.OrdinalIgnoreCase))
+        {
+            return false;
+        }
+
+        var unescapedHost = Uri.UnescapeDataString(uri.Host ?? string.Empty);
+        var path = uri.AbsolutePath.Trim('/');
+        var unescapedPath = Uri.UnescapeDataString(path);
+        if (string.IsNullOrWhiteSpace(unescapedHost) || string.IsNullOrWhiteSpace(unescapedPath))
+        {
+            return false;
+        }
+
+        tabName = unescapedHost;
+        archiveBaseName = unescapedPath;
+        return true;
+    }
+
     private static string? TryExtractCustomTabName(string helixLabel)
     {
         if (string.IsNullOrWhiteSpace(helixLabel))
@@ -2571,6 +3358,32 @@ public partial class MainViewModel : ObservableObject
         var invalidChars = Path.GetInvalidFileNameChars();
         var sanitized = new string(label.Select(ch => invalidChars.Contains(ch) ? '_' : ch).ToArray());
         return string.IsNullOrWhiteSpace(sanitized) ? ScanOnlyVersionLabel : sanitized;
+    }
+
+    private string TryBuildBasketDestinationPath(string helixVersion, string fileName)
+    {
+        if (string.IsNullOrWhiteSpace(OutputFolderPreview) || string.IsNullOrWhiteSpace(fileName))
+        {
+            return string.Empty;
+        }
+
+        var versionFolder = GetSafeVersionFolderName(helixVersion);
+        return Path.Combine(OutputFolderPreview, versionFolder, fileName);
+    }
+
+    private bool IsDestinationAlreadyDownloaded(string destinationPath)
+    {
+        if (string.IsNullOrWhiteSpace(destinationPath))
+        {
+            return false;
+        }
+
+        if (_redownloadUnlockedDestinationPaths.Contains(destinationPath))
+        {
+            return false;
+        }
+
+        return File.Exists(destinationPath);
     }
 
     private static string GetEffectiveModuleCode(string code)
@@ -3060,7 +3873,6 @@ public partial class MainViewModel : ObservableObject
 
         if (_suppressSelectionSync)
         {
-            UpdateBasket();
             return;
         }
 
@@ -3097,7 +3909,6 @@ public partial class MainViewModel : ObservableObject
 
         if (_suppressSelectionSync)
         {
-            UpdateBasket();
             return;
         }
 
@@ -3126,7 +3937,6 @@ public partial class MainViewModel : ObservableObject
 
         if (_suppressSelectionSync)
         {
-            UpdateBasket();
             return;
         }
 
@@ -3277,7 +4087,12 @@ public partial class MainViewModel : ObservableObject
             return;
         }
 
-        if (_suppressSelectionSync || SelectedVersion == null)
+        if (_suppressSelectionSync)
+        {
+            return;
+        }
+
+        if (SelectedVersion == null)
         {
             UpdateBasket();
             return;
@@ -4190,6 +5005,7 @@ public partial class MainViewModel : ObservableObject
         if (previous != TransferStatus.Completed && item.Status == TransferStatus.Completed)
         {
             NotifyTransferCompleted(item);
+            UpdateBasket();
         }
 
         _transferStatusLookup[item.Record.Id] = item.Status;
@@ -4239,15 +5055,25 @@ public partial class MainViewModel : ObservableObject
 
     partial void OnCompanyNameChanged(string value)
     {
+        _redownloadUnlockedDestinationPaths.Clear();
         OnPropertyChanged(nameof(OutputFolderPreview));
+        if (!_isApplyingSelectionHistory && !_isRestoringCustomState)
+        {
+            UpdateBasket();
+        }
     }
 
     partial void OnSettingsChanged(SettingsModel value)
     {
+        _redownloadUnlockedDestinationPaths.Clear();
         OnPropertyChanged(nameof(SettingsSummary));
         OnPropertyChanged(nameof(OutputFolderPreview));
         MaxConcurrentTransfers = value.MaxConcurrentTransfers;
         MaxConcurrentTransfersInput = value.MaxConcurrentTransfers.ToString();
+        if (!_isApplyingSelectionHistory && !_isRestoringCustomState)
+        {
+            UpdateBasket();
+        }
     }
 
     partial void OnMaxConcurrentTransfersChanged(int value)
@@ -4279,7 +5105,7 @@ public partial class MainViewModel : ObservableObject
 
     partial void OnSelectedCustomTabChanged(CustomTabViewModel? value)
     {
-        if (!_isRestoringCustomState)
+        if (!_isRestoringCustomState && !_isApplyingSelectionHistory)
         {
             Settings.SelectedCustomTabName = value?.Name ?? string.Empty;
             PersistCustomState();
@@ -4310,9 +5136,9 @@ public partial class MainViewModel : ObservableObject
 
     private string BuildUploadListText()
     {
-        var lines = new List<string> { "■アップロードしたファイル" };
+        var lines = new List<string> { "■アップロード済みファイル" };
         var seen = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
-        foreach (var item in BasketItems.Where(b => !b.IsMissing))
+        foreach (var item in BasketItems.Where(b => !b.IsMissing && b.IsAlreadyDownloaded))
         {
             var key = string.IsNullOrWhiteSpace(item.SourcePath) ? item.AssetFileName : item.SourcePath;
             if (string.IsNullOrWhiteSpace(key) || !seen.Add(key))

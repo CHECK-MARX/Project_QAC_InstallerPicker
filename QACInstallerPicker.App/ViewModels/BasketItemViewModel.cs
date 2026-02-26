@@ -15,7 +15,9 @@ public partial class BasketItemViewModel : ObservableObject
         string sourcePath,
         bool isMissing,
         string reason,
-        bool isManualPick)
+        bool isManualPick,
+        bool isAlreadyDownloaded = false,
+        string destinationPath = "")
     {
         HelixVersion = helixVersion;
         Code = code;
@@ -28,6 +30,8 @@ public partial class BasketItemViewModel : ObservableObject
         IsMissing = isMissing;
         Reason = reason;
         IsManualPick = isManualPick;
+        IsAlreadyDownloaded = isAlreadyDownloaded;
+        DestinationPath = destinationPath;
     }
 
     public string HelixVersion { get; }
@@ -41,4 +45,8 @@ public partial class BasketItemViewModel : ObservableObject
     public bool IsMissing { get; }
     public string Reason { get; }
     public bool IsManualPick { get; }
+    public string DestinationPath { get; }
+
+    [ObservableProperty]
+    private bool _isAlreadyDownloaded;
 }

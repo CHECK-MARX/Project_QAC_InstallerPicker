@@ -1,11 +1,11 @@
 <Window x:Class="QACInstallerPicker.App.Views.CustomTabPreviewWindow"
         xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
-        Title="カスタムタブ編集/プレビュー"
-        Height="760"
-        Width="1420"
-        MinHeight="520"
-        MinWidth="980"
+        Title="カスタムタブ編集/圧縮プレビュー"
+        Height="820"
+        Width="1500"
+        MinHeight="560"
+        MinWidth="1050"
         ResizeMode="CanResize"
         WindowStartupLocation="CenterOwner">
     <Grid Margin="10">
@@ -78,7 +78,18 @@
                                           AutoGenerateColumns="True"
                                           CanUserAddRows="False"
                                           CanUserDeleteRows="True"
-                                          IsReadOnly="False" />
+                                          IsReadOnly="False">
+                                    <DataGrid.RowStyle>
+                                        <Style TargetType="DataGridRow">
+                                            <Setter Property="ToolTip" Value="{Binding [__SelectionLockReason]}" />
+                                            <Style.Triggers>
+                                                <DataTrigger Binding="{Binding [__SelectionEnabled]}" Value="False">
+                                                    <Setter Property="Foreground" Value="Gray" />
+                                                </DataTrigger>
+                                            </Style.Triggers>
+                                        </Style>
+                                    </DataGrid.RowStyle>
+                                </DataGrid>
                             </Grid>
                         </DataTemplate>
                     </TabControl.ContentTemplate>
@@ -92,24 +103,20 @@
                     <RowDefinition Height="Auto" />
                     <RowDefinition Height="2*" />
                     <RowDefinition Height="*" />
+                    <RowDefinition Height="*" />
                 </Grid.RowDefinitions>
 
                 <WrapPanel Grid.Row="0" Margin="0,0,0,8">
                     <TextBlock Text="{Binding PreviewSummary}" VerticalAlignment="Center" Foreground="#555" Margin="0,0,12,0" />
-                    <TextBlock Text="ZIP名" VerticalAlignment="Center" Margin="0,0,6,0" />
-                    <ComboBox ItemsSource="{Binding ZipFileNameModeOptions}"
-                              SelectedItem="{Binding ZipFileNameMode, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}"
-                              Width="80"
-                              Margin="0,0,6,0" />
-                    <TextBox Text="{Binding CustomZipBaseName, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}"
+                    <TextBlock Text="圧縮名" VerticalAlignment="Center" Margin="0,0,6,0" />
+                    <TextBox Text="{Binding CurrentArchiveBaseName, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}"
                              Width="180"
-                             IsEnabled="{Binding IsCustomZipNameEnabled}"
-                             Margin="0,0,10,0" />
-                    <TextBlock Text="{Binding SelectedZipNamePreview, StringFormat=圧縮名: {0}}" VerticalAlignment="Center" Foreground="#555" Margin="0,0,10,0" />
+                             Margin="0,0,8,0" />
+                    <Button Content="圧縮登録" Width="90" Margin="0,0,6,0" Click="RegisterZipPlanButton_Click" />
+                    <Button Content="登録削除" Width="90" Margin="0,0,6,0" Click="RemoveRegisteredZipPlanButton_Click" />
                     <Button Content="全選択" Width="70" Margin="0,0,6,0" Click="SelectAllPreviewRowsButton_Click" />
                     <Button Content="全解除" Width="70" Margin="0,0,6,0" Click="ClearPreviewRowsButton_Click" />
-                    <Button Content="再読込" Width="80" Margin="0,0,6,0" Click="RefreshButton_Click" />
-                    <Button Content="キュー圧縮反映" Width="110" Click="ApplyZipPlanButton_Click" />
+                    <Button Content="再読込" Width="80" Click="RefreshButton_Click" />
                 </WrapPanel>
 
                 <TabControl Grid.Row="1"
@@ -131,11 +138,24 @@
                                       AutoGenerateColumns="False"
                                       CanUserAddRows="False"
                                       IsReadOnly="False">
+                                <DataGrid.RowStyle>
+                                    <Style TargetType="DataGridRow">
+                                        <Setter Property="ToolTip" Value="{Binding SelectionLockReason}" />
+                                        <Style.Triggers>
+                                            <DataTrigger Binding="{Binding IsSelectionEnabled}" Value="False">
+                                                <Setter Property="Foreground" Value="Gray" />
+                                            </DataTrigger>
+                                        </Style.Triggers>
+                                    </Style>
+                                </DataGrid.RowStyle>
                                 <DataGrid.Columns>
                                     <DataGridTemplateColumn Header="対象" Width="56">
                                         <DataGridTemplateColumn.CellTemplate>
                                             <DataTemplate>
-                                                <CheckBox IsChecked="{Binding IsSelected, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}" HorizontalAlignment="Center" />
+                                                <CheckBox IsChecked="{Binding IsSelected, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}"
+                                                          IsEnabled="{Binding IsSelectionEnabled}"
+                                                          ToolTip="{Binding SelectionLockReason}"
+                                                          HorizontalAlignment="Center" />
                                             </DataTemplate>
                                         </DataGridTemplateColumn.CellTemplate>
                                     </DataGridTemplateColumn>
@@ -149,7 +169,7 @@
                     </TabControl.ContentTemplate>
                 </TabControl>
 
-                <GroupBox Grid.Row="2" Header="フォルダごとの圧縮方法（チェックON: ZIP内でフォルダ保持）" Margin="0,8,0,0">
+                <GroupBox Grid.Row="2" Header="フォルダごとの圧縮方法（チェックON: ZIP内でフォルダ保持）" Margin="0,8,0,8">
                     <DataGrid ItemsSource="{Binding CurrentFolderOptions}"
                               AutoGenerateColumns="False"
                               CanUserAddRows="False"
@@ -163,6 +183,35 @@
                                 </DataGridTemplateColumn.CellTemplate>
                             </DataGridTemplateColumn>
                             <DataGridTextColumn Header="フォルダ" Binding="{Binding FolderName}" Width="*" IsReadOnly="True" />
+                        </DataGrid.Columns>
+                    </DataGrid>
+                </GroupBox>
+
+                <GroupBox Grid.Row="3" Header="登録済み圧縮（複数可）">
+                    <DataGrid ItemsSource="{Binding RegisteredZipPlans}"
+                              SelectedItem="{Binding SelectedRegisteredZipPlan, Mode=TwoWay}"
+                              AutoGenerateColumns="False"
+                              CanUserAddRows="False"
+                              IsReadOnly="True">
+                        <DataGrid.Columns>
+                            <DataGridTextColumn Header="タブ" Binding="{Binding TabName}" Width="110" />
+                            <DataGridTextColumn Header="ZIP名" Binding="{Binding ZipFileName}" Width="180" />
+                            <DataGridTextColumn Header="件数" Binding="{Binding ItemCount}" Width="60" />
+                            <DataGridTemplateColumn Header="内容プレビュー" Width="*">
+                                <DataGridTemplateColumn.CellTemplate>
+                                    <DataTemplate>
+                                        <TextBlock Text="{Binding ContentsPreview}" TextTrimming="CharacterEllipsis">
+                                            <TextBlock.ToolTip>
+                                                <ToolTip MaxWidth="760">
+                                                    <ScrollViewer MaxHeight="320" VerticalScrollBarVisibility="Auto">
+                                                        <TextBlock Text="{Binding ContentsFull}" TextWrapping="Wrap" />
+                                                    </ScrollViewer>
+                                                </ToolTip>
+                                            </TextBlock.ToolTip>
+                                        </TextBlock>
+                                    </DataTemplate>
+                                </DataGridTemplateColumn.CellTemplate>
+                            </DataGridTemplateColumn>
                         </DataGrid.Columns>
                     </DataGrid>
                 </GroupBox>

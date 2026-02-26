@@ -76,15 +76,19 @@
                                     <DataTemplate>
                                         <DataGrid ItemsSource="{Binding ModulesView}" AutoGenerateColumns="False"
                                                   CanUserAddRows="False" IsReadOnly="False" HeadersVisibility="Column"
-                                                  SelectionMode="Single" Margin="0,8,0,0">
+                                                  SelectionMode="Single" Margin="0,8,0,0"
+                                                  MouseDoubleClick="ModulesDataGrid_MouseDoubleClick">
                                             <DataGrid.RowStyle>
                                                 <Style TargetType="DataGridRow">
                                                     <Setter Property="IsEnabled" Value="{Binding IsEnabled}" />
-                                                    <Setter Property="ToolTip" Value="{Binding DisabledReason}" />
+                                                    <Setter Property="ToolTip" Value="{Binding EffectiveDisabledReason}" />
                                                     <Style.Triggers>
                                                         <Trigger Property="IsEnabled" Value="False">
                                                             <Setter Property="Foreground" Value="Gray" />
                                                         </Trigger>
+                                                        <DataTrigger Binding="{Binding HasDownloadedAsset}" Value="True">
+                                                            <Setter Property="Foreground" Value="Gray" />
+                                                        </DataTrigger>
                                                     </Style.Triggers>
                                                 </Style>
                                             </DataGrid.RowStyle>
@@ -93,7 +97,8 @@
                                                     <DataGridTemplateColumn.CellTemplate>
                                                         <DataTemplate>
                                                             <CheckBox IsChecked="{Binding IsSelected, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}"
-                                                                      IsEnabled="{Binding IsEnabled}"
+                                                                      IsEnabled="{Binding IsSelectionEnabled}"
+                                                                      ToolTip="{Binding EffectiveDisabledReason}"
                                                                       Visibility="{Binding IsSelectionVisible, Converter={StaticResource BoolToVis}}"
                                                                       HorizontalAlignment="Center" />
                                                         </DataTemplate>
@@ -225,7 +230,18 @@
                                                               CanUserAddRows="False"
                                                               CanUserDeleteRows="True"
                                                               IsReadOnly="False"
-                                                              MouseDoubleClick="CustomTabDataGrid_MouseDoubleClick" />
+                                                              MouseDoubleClick="CustomTabDataGrid_MouseDoubleClick">
+                                                        <DataGrid.RowStyle>
+                                                            <Style TargetType="DataGridRow">
+                                                                <Setter Property="ToolTip" Value="{Binding [__SelectionLockReason]}" />
+                                                                <Style.Triggers>
+                                                                    <DataTrigger Binding="{Binding [__SelectionEnabled]}" Value="False">
+                                                                        <Setter Property="Foreground" Value="Gray" />
+                                                                    </DataTrigger>
+                                                                </Style.Triggers>
+                                                            </Style>
+                                                        </DataGrid.RowStyle>
+                                                    </DataGrid>
                                                 </Grid>
                                             </DataTemplate>
                                         </TabControl.ContentTemplate>
@@ -245,12 +261,16 @@
 
                         <GroupBox Header="プレビュー (選択一覧)" Grid.Row="0" Margin="8,8,0,8">
                             <DataGrid ItemsSource="{Binding BasketItems}" AutoGenerateColumns="False"
+                                      MouseDoubleClick="BasketDataGrid_MouseDoubleClick"
                                       CanUserAddRows="False" IsReadOnly="True">
                                 <DataGrid.RowStyle>
                                     <Style TargetType="DataGridRow">
                                         <Setter Property="ToolTip" Value="{Binding Reason}" />
                                         <Style.Triggers>
                                             <DataTrigger Binding="{Binding IsMissing}" Value="True">
+                                                <Setter Property="Foreground" Value="Gray" />
+                                            </DataTrigger>
+                                            <DataTrigger Binding="{Binding IsAlreadyDownloaded}" Value="True">
                                                 <Setter Property="Foreground" Value="Gray" />
                                             </DataTrigger>
                                         </Style.Triggers>
@@ -327,31 +347,53 @@
 
                     <Border Grid.Row="1" Grid.Column="0" Grid.ColumnSpan="2" Background="#F7F7F7" Padding="8" Margin="0,8,0,0">
                         <Grid>
-                            <Grid.ColumnDefinitions>
-                                <ColumnDefinition Width="Auto" />
-                                <ColumnDefinition Width="160" />
-                                <ColumnDefinition Width="Auto" />
-                                <ColumnDefinition Width="220" />
-                                <ColumnDefinition Width="Auto" />
-                                <ColumnDefinition Width="260" />
-                                <ColumnDefinition Width="Auto" />
-                                <ColumnDefinition Width="80" />
-                                <ColumnDefinition Width="Auto" />
-                            </Grid.ColumnDefinitions>
+                            <Grid.RowDefinitions>
+                                <RowDefinition Height="Auto" />
+                                <RowDefinition Height="Auto" />
+                            </Grid.RowDefinitions>
 
-                            <TextBlock Grid.Column="0" Text="会社名" VerticalAlignment="Center" Margin="0,0,6,0" />
-                            <TextBox Grid.Column="1" Text="{Binding CompanyName, UpdateSourceTrigger=PropertyChanged}" Height="26" />
+                            <Grid Grid.Row="0">
+                                <Grid.ColumnDefinitions>
+                                    <ColumnDefinition Width="Auto" />
+                                    <ColumnDefinition Width="170" />
+                                    <ColumnDefinition Width="Auto" />
+                                    <ColumnDefinition Width="250" />
+                                    <ColumnDefinition Width="Auto" />
+                                    <ColumnDefinition Width="290" />
+                                    <ColumnDefinition Width="Auto" />
+                                    <ColumnDefinition Width="80" />
+                                    <ColumnDefinition Width="Auto" />
+                                    <ColumnDefinition Width="Auto" />
+                                </Grid.ColumnDefinitions>
 
-                            <TextBlock Grid.Column="2" Text="出力ベース" VerticalAlignment="Center" Margin="12,0,6,0" />
-                            <TextBox Grid.Column="3" Text="{Binding OutputBaseFolder, UpdateSourceTrigger=PropertyChanged}" Height="26" />
+                                <TextBlock Grid.Column="0" Text="会社名" VerticalAlignment="Center" Margin="0,0,6,0" />
+                                <TextBox Grid.Column="1" Text="{Binding CompanyName, UpdateSourceTrigger=PropertyChanged}" Height="26" />
 
-                            <TextBlock Grid.Column="4" Text="出力先" VerticalAlignment="Center" Margin="12,0,6,0" />
-                            <TextBox Grid.Column="5" Text="{Binding OutputFolderPreview, Mode=OneWay}" Height="26" IsReadOnly="True" />
+                                <TextBlock Grid.Column="2" Text="出力ベース" VerticalAlignment="Center" Margin="12,0,6,0" />
+                                <TextBox Grid.Column="3" Text="{Binding OutputBaseFolder, UpdateSourceTrigger=PropertyChanged}" Height="26" />
 
-                            <TextBlock Grid.Column="6" Text="同時実行数" VerticalAlignment="Center" Margin="12,0,6,0" />
-                            <TextBox Grid.Column="7" Text="{Binding MaxConcurrentTransfers}" Height="26" />
+                                <TextBlock Grid.Column="4" Text="出力先" VerticalAlignment="Center" Margin="12,0,6,0" />
+                                <TextBox Grid.Column="5" Text="{Binding OutputFolderPreview, Mode=OneWay}" Height="26" IsReadOnly="True" />
 
-                            <Button Grid.Column="8" Content="キュー追加" Margin="12,0,0,0" Padding="12,4" Command="{Binding QueueAddCommand}" />
+                                <TextBlock Grid.Column="6" Text="同時実行数" VerticalAlignment="Center" Margin="12,0,6,0" />
+                                <TextBox Grid.Column="7" Text="{Binding MaxConcurrentTransfers}" Height="26" />
+
+                                <Button Grid.Column="8" Content="リセット" Margin="12,0,0,0" Padding="10,4" Command="{Binding ResetSelectionStateCommand}" />
+                                <Button Grid.Column="9" Content="キュー追加" Margin="8,0,0,0" Padding="12,4" Command="{Binding QueueAddCommand}" />
+                            </Grid>
+
+                            <StackPanel Grid.Row="1" Orientation="Horizontal" Margin="0,8,0,0">
+                                <TextBlock Text="選定履歴(最新5件)" VerticalAlignment="Center" Margin="0,0,8,0" />
+                                <ComboBox Width="340"
+                                          ItemsSource="{Binding SelectionStateHistoryEntries}"
+                                          SelectedItem="{Binding SelectedSelectionStateHistoryEntry}"
+                                          DisplayMemberPath="DisplayName"
+                                          VerticalAlignment="Center" />
+                                <Button Content="呼び出し"
+                                        Margin="8,0,0,0"
+                                        Padding="10,4"
+                                        Command="{Binding ApplySelectionStateHistoryCommand}" />
+                            </StackPanel>
                         </Grid>
                     </Border>
                 </Grid>
