@@ -22,6 +22,8 @@
                     <ColumnDefinition Width="Auto" />
                     <ColumnDefinition Width="Auto" />
                     <ColumnDefinition Width="Auto" />
+                    <ColumnDefinition Width="Auto" />
+                    <ColumnDefinition Width="Auto" />
                     <ColumnDefinition Width="*" />
                 </Grid.ColumnDefinitions>
 
@@ -31,9 +33,13 @@
                         Command="{Binding LoadExcelCommand}" />
                 <Button Grid.Column="2" Content="共有スキャン" Margin="0,0,8,0" Padding="10,4"
                         Command="{Binding ScanInstallersCommand}" />
-                <Button Grid.Column="3" Content="設定" Margin="0,0,8,0" Padding="10,4"
+                <Button Grid.Column="3" Content="設定Excel出力" Margin="0,0,8,0" Padding="10,4"
+                        Command="{Binding ExportBulkConfigExcelCommand}" />
+                <Button Grid.Column="4" Content="設定Excel取込" Margin="0,0,8,0" Padding="10,4"
+                        Command="{Binding ImportBulkConfigExcelCommand}" />
+                <Button Grid.Column="5" Content="設定" Margin="0,0,8,0" Padding="10,4"
                         Command="{Binding OpenSettingsCommand}" />
-                <TextBlock Grid.Column="4" VerticalAlignment="Center" Text="{Binding SettingsSummary}" Foreground="#555" />
+                <TextBlock Grid.Column="6" VerticalAlignment="Center" Text="{Binding SettingsSummary}" Foreground="#555" />
             </Grid>
         </Border>
 
@@ -80,14 +86,16 @@
                                                   MouseDoubleClick="ModulesDataGrid_MouseDoubleClick">
                                             <DataGrid.RowStyle>
                                                 <Style TargetType="DataGridRow">
-                                                    <Setter Property="IsEnabled" Value="{Binding IsEnabled}" />
                                                     <Setter Property="ToolTip" Value="{Binding EffectiveDisabledReason}" />
                                                     <Style.Triggers>
-                                                        <Trigger Property="IsEnabled" Value="False">
+                                                        <DataTrigger Binding="{Binding IsEnabled}" Value="False">
                                                             <Setter Property="Foreground" Value="Gray" />
-                                                        </Trigger>
+                                                        </DataTrigger>
                                                         <DataTrigger Binding="{Binding HasDownloadedAsset}" Value="True">
                                                             <Setter Property="Foreground" Value="Gray" />
+                                                        </DataTrigger>
+                                                        <DataTrigger Binding="{Binding IsInstallerMissingInScan}" Value="True">
+                                                            <Setter Property="Foreground" Value="Red" />
                                                         </DataTrigger>
                                                     </Style.Triggers>
                                                 </Style>
@@ -112,46 +120,14 @@
                                                     </DataGridTextColumn.ElementStyle>
                                                 </DataGridTextColumn>
                                                 <DataGridTextColumn Header="名称" Binding="{Binding Name}" Width="220" />
-                                                <DataGridTemplateColumn Header="対応表版数" Width="160">
-                                                    <DataGridTemplateColumn.CellTemplate>
-                                                        <DataTemplate>
-                                                            <Grid>
-                                                                <TextBlock Text="{Binding ModuleVersionDisplay}" VerticalAlignment="Center">
-                                                                    <TextBlock.Style>
-                                                                        <Style TargetType="TextBlock">
-                                                                            <Setter Property="Visibility" Value="Visible" />
-                                                                            <Style.Triggers>
-                                                                                <DataTrigger Binding="{Binding HasInstallerVersionOptions}" Value="True">
-                                                                                    <Setter Property="Visibility" Value="Collapsed" />
-                                                                                </DataTrigger>
-                                                                            </Style.Triggers>
-                                                                        </Style>
-                                                                    </TextBlock.Style>
-                                                                </TextBlock>
-                                                                <ComboBox ItemsSource="{Binding InstallerVersionOptions}"
-                                                                          SelectedItem="{Binding SelectedInstallerVersion, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}"
-                                                                          MinWidth="100">
-                                                                    <ComboBox.Style>
-                                                                        <Style TargetType="ComboBox">
-                                                                            <Setter Property="Visibility" Value="Collapsed" />
-                                                                            <Style.Triggers>
-                                                                                <DataTrigger Binding="{Binding HasInstallerVersionOptions}" Value="True">
-                                                                                    <Setter Property="Visibility" Value="Visible" />
-                                                                                </DataTrigger>
-                                                                            </Style.Triggers>
-                                                                        </Style>
-                                                                    </ComboBox.Style>
-                                                                </ComboBox>
-                                                            </Grid>
-                                                        </DataTemplate>
-                                                    </DataGridTemplateColumn.CellTemplate>
-                                                </DataGridTemplateColumn>
+                                                <DataGridTextColumn Header="対応表版数" Binding="{Binding ModuleVersionDisplay}" Width="160" />
                                                 <DataGridTextColumn Header="対応OS" Binding="{Binding OsDisplay}" Width="100" />
                                                 <DataGridTemplateColumn Header="選択OS" Width="90">
                                                     <DataGridTemplateColumn.CellTemplate>
                                                         <DataTemplate>
                                                             <ComboBox ItemsSource="{Binding OsSelectionOptions}"
                                                                       SelectedItem="{Binding OsSelection, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}"
+                                                                      IsEnabled="{Binding IsEnabled}"
                                                                       ToolTip="{Binding OsDisplay}"
                                                                       MinWidth="80" />
                                                         </DataTemplate>

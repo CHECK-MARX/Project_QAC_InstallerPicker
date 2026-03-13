@@ -28,6 +28,10 @@ public class SettingsService
         settings.CustomTabStates ??= new();
         settings.CustomZipPlans ??= new();
         settings.SelectionStateHistory ??= new();
+        settings.BulkExcelTemplateOptions ??= new();
+        settings.BulkExcelTemplateOptions.ExportHelixVersion ??= string.Empty;
+        settings.BulkExcelTemplateOptions.ExportCustomTabNames ??= new();
+        settings.BulkExcelTemplateOptions.IncludeScanSelection = false;
 
         return settings;
     }

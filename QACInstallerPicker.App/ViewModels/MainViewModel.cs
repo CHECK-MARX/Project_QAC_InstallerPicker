@@ -29,6 +29,7 @@ public partial class MainViewModel : ObservableObject
 {
     private readonly SettingsService _settingsService;
     private readonly ExcelService _excelService;
+    private readonly BulkSelectionExcelService _bulkSelectionExcelService;
     private readonly InstallerScanService _scanService;
     private readonly MemoParserService _memoService;
     private readonly DatabaseService _databaseService;
@@ -87,7 +88,15 @@ public partial class MainViewModel : ObservableObject
         new Dictionary<string, string[]>(StringComparer.OrdinalIgnoreCase)
         {
             ["QACPP"] = new[] { "QAC++" },
-            ["QAC++"] = new[] { "QACPP" }
+            ["QAC++"] = new[] { "QACPP" },
+            ["VALIDATE"] = new[] { "VALDATE" },
+            ["VALDATE"] = new[] { "VALIDATE" }
+        };
+    private static readonly IReadOnlyDictionary<string, string> CanonicalModuleCodeMap =
+        new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)
+        {
+            ["VALDATE"] = "VALIDATE",
+            ["DASHBOAD"] = "DASHBOARD"
         };
     private static readonly HashSet<string> ExtraModuleCodes = new(StringComparer.OrdinalIgnoreCase)
     {
@@ -126,6 +135,7 @@ public partial class MainViewModel : ObservableObject
     {
         _settingsService = new SettingsService();
         _excelService = new ExcelService();
+        _bulkSelectionExcelService = new BulkSelectionExcelService();
         _scanService = new InstallerScanService();
         _memoService = new MemoParserService();
         _databaseService = new DatabaseService();
@@ -399,6 +409,57 @@ public partial class MainViewModel : ObservableObject
     private void OpenSettings()
     {
         RequestOpenSettings?.Invoke(this, EventArgs.Empty);
+    }
+
+    [RelayCommand]
+    private void ExportBulkConfigExcel()
+    {
+        try
+        {
+            var dialog = new Win32.SaveFileDialog
+            {
+                Filter = "Excel files (*.xlsx)|*.xlsx",
+                FileName = $"QAC一括設定_{DateTime.Now:yyyyMMdd_HHmm}.xlsx"
+            };
+
+            if (dialog.ShowDialog() != true)
+            {
+                return;
+            }
+
+            var model = BuildBulkSelectionWorkbookModel();
+            var options = Settings.BulkExcelTemplateOptions ?? new BulkExcelTemplateOptions();
+            _bulkSelectionExcelService.ExportTemplate(dialog.FileName, model, options);
+            WpfMessageBox.Show("設定用Excelを出力しました。", "Export", MessageBoxButton.OK, MessageBoxImage.Information);
+        }
+        catch (Exception ex)
+        {
+            WpfMessageBox.Show($"設定Excel出力に失敗しました: {ex.Message}", "Error", MessageBoxButton.OK, MessageBoxImage.Error);
+        }
+    }
+
+    [RelayCommand]
+    private void ImportBulkConfigExcel()
+    {
+        try
+        {
+            var dialog = new Win32.OpenFileDialog
+            {
+                Filter = "Excel files (*.xlsx)|*.xlsx|All files (*.*)|*.*"
+            };
+            if (dialog.ShowDialog() != true)
+            {
+                return;
+            }
+
+            var imported = _bulkSelectionExcelService.ImportTemplate(dialog.FileName);
+            ApplyImportedBulkSelection(imported);
+            WpfMessageBox.Show("設定Excelを取り込みました。", "Import", MessageBoxButton.OK, MessageBoxImage.Information);
+        }
+        catch (Exception ex)
+        {
+            WpfMessageBox.Show($"設定Excel取込に失敗しました: {ex.Message}", "Error", MessageBoxButton.OK, MessageBoxImage.Error);
+        }
     }
 
     [RelayCommand]
@@ -1313,6 +1374,7 @@ public partial class MainViewModel : ObservableObject
         var batches = selectedTransferItems
             .GroupBy(item => NormalizeHelixVersionLabel(item.HelixVersion))
             .ToList();
+        var createdBatchIds = new List<long>();
 
         foreach (var group in batches)
         {
@@ -1332,6 +1394,7 @@ public partial class MainViewModel : ObservableObject
             };
 
             batch.Id = await _databaseService.InsertBatchAsync(batch);
+            createdBatchIds.Add(batch.Id);
 
             foreach (var basketItem in group)
             {
@@ -1364,7 +1427,34 @@ public partial class MainViewModel : ObservableObject
             }
         }
 
-        await ExecuteCustomZipPlansAsync(outputRoot);
+        var customZipBatchId = 0L;
+        if (hasZipPlans)
+        {
+            customZipBatchId = createdBatchIds.FirstOrDefault();
+            if (customZipBatchId == 0)
+            {
+                var customZipBatch = new TransferBatch
+                {
+                    TimestampUtc = DateTime.UtcNow,
+                    Company = CompanyName,
+                    HelixVersion = "カスタムZIP",
+                    OutputRoot = outputRoot,
+                    Memo = MemoText ?? string.Empty,
+                    SelectedLogicalItemsJson = JsonSerializer.Serialize(
+                        GetCustomZipPlans().Select(plan => new
+                        {
+                            Code = CustomZipSummaryCode,
+                            plan.TabName,
+                            plan.ArchiveBaseName,
+                            ItemCount = plan.Items.Count
+                        }))
+                };
+
+                customZipBatchId = await _databaseService.InsertBatchAsync(customZipBatch);
+            }
+        }
+
+        await ExecuteCustomZipPlansAsync(outputRoot, customZipBatchId);
         SaveCurrentSelectionStateToHistory();
 
         TransferSummary.Update(TransferItems, MaxConcurrentTransfers);
@@ -1403,7 +1493,7 @@ public partial class MainViewModel : ObservableObject
         return string.Join(Environment.NewLine, lines);
     }
 
-    private async Task ExecuteCustomZipPlansAsync(string outputRoot)
+    private async Task ExecuteCustomZipPlansAsync(string outputRoot, long customZipBatchId)
     {
         var plans = GetCustomZipPlans();
         if (plans.Count == 0)
@@ -1428,6 +1518,9 @@ public partial class MainViewModel : ObservableObject
                 continue;
             }
 
+            TransferItemRecord? zipRecord = null;
+            TransferItemViewModel? zipVm = null;
+
             try
             {
                 var requestedArchiveName = GetSafeArchiveBaseName(plan.ArchiveBaseName, plan.TabName);
@@ -1440,11 +1533,106 @@ public partial class MainViewModel : ObservableObject
                     continue;
                 }
 
-                await Task.Run(() => CreateCustomZipArchive(zipPath, rows));
+                if (customZipBatchId > 0)
+                {
+                    long sourceTotalBytes = 0;
+                    var latestSourceLwt = DateTime.UtcNow;
+                    var hasLwt = false;
+                    foreach (var row in rows)
+                    {
+                        if (string.IsNullOrWhiteSpace(row.SourcePath))
+                        {
+                            continue;
+                        }
+
+                        try
+                        {
+                            var info = new FileInfo(row.SourcePath);
+                            if (!info.Exists)
+                            {
+                                continue;
+                            }
+
+                            sourceTotalBytes += Math.Max(0, info.Length);
+                            if (!hasLwt || info.LastWriteTimeUtc > latestSourceLwt)
+                            {
+                                latestSourceLwt = info.LastWriteTimeUtc;
+                                hasLwt = true;
+                            }
+                        }
+                        catch
+                        {
+                            // ignore per-item stat failures; zip creation itself will validate existence.
+                        }
+                    }
+
+                    zipRecord = new TransferItemRecord
+                    {
+                        BatchId = customZipBatchId,
+                        Company = CompanyName,
+                        LogicalKey = $"{CustomZipSummaryCode}|{plan.TabName}|{safeArchiveName}",
+                        AssetSourcePath = BuildCustomZipPlanSourcePath(plan.TabName, safeArchiveName),
+                        DestPath = zipPath,
+                        Size = sourceTotalBytes,
+                        Status = TransferStatus.Queued,
+                        SourceLastWriteTimeUtc = hasLwt ? latestSourceLwt : DateTime.UtcNow
+                    };
+                    zipRecord.Id = await _databaseService.InsertTransferItemAsync(zipRecord);
+
+                    zipVm = new TransferItemViewModel(zipRecord, TransferManager);
+                    RegisterTransferItem(zipVm);
+                    TransferItems.Add(zipVm);
+
+                    zipVm.PrepareForStart();
+                    zipVm.SetStatus(TransferStatus.Downloading);
+                    await _databaseService.UpdateTransferItemAsync(zipRecord);
+                }
+
+                await Task.Run(() => CreateCustomZipArchive(
+                    zipPath,
+                    rows,
+                    zipVm == null
+                        ? null
+                        : (copied, total) =>
+                        {
+                            var effectiveTotal = total <= 0 ? Math.Max(1, copied) : total;
+                            var safeCopied = Math.Min(copied, effectiveTotal);
+                            zipVm.ReportProgress(safeCopied, effectiveTotal, 0, 0);
+                        }));
+
+                if (zipRecord != null && zipVm != null)
+                {
+                    long zipSize = 0;
+                    try
+                    {
+                        var zipInfo = new FileInfo(zipPath);
+                        if (zipInfo.Exists)
+                        {
+                            zipSize = Math.Max(0, zipInfo.Length);
+                        }
+                    }
+                    catch
+                    {
+                        // keep best-effort progress values
+                    }
+
+                    zipRecord.BytesCopied = zipSize;
+                    zipRecord.Size = zipSize;
+                    zipVm.ReportProgress(zipSize, zipSize, 0, 0);
+                    zipVm.MarkCompleted();
+                    await _databaseService.UpdateTransferItemAsync(zipRecord);
+                }
+
                 created++;
             }
             catch (Exception ex)
             {
+                if (zipRecord != null && zipVm != null)
+                {
+                    zipVm.MarkFailed($"ZipCreateFailed:{ex.Message}");
+                    await _databaseService.UpdateTransferItemAsync(zipRecord);
+                }
+
                 errors.Add($"{plan.TabName}: {ex.Message}");
             }
         }
@@ -1511,7 +1699,10 @@ public partial class MainViewModel : ObservableObject
         }
     }
 
-    private static void CreateCustomZipArchive(string zipPath, IReadOnlyList<CustomZipPlanItem> rows)
+    private static void CreateCustomZipArchive(
+        string zipPath,
+        IReadOnlyList<CustomZipPlanItem> rows,
+        Action<long, long>? progress = null)
     {
         var directory = Path.GetDirectoryName(zipPath);
         if (!string.IsNullOrWhiteSpace(directory))
@@ -1519,22 +1710,34 @@ public partial class MainViewModel : ObservableObject
             Directory.CreateDirectory(directory);
         }
 
+        var validRows = rows
+            .Where(row =>
+                !string.IsNullOrWhiteSpace(row.SourcePath) &&
+                File.Exists(row.SourcePath) &&
+                !ShouldExcludeFromCustomSelection(row.SourcePath))
+            .ToList();
+        long totalBytes = 0;
+        foreach (var row in validRows)
+        {
+            try
+            {
+                totalBytes += Math.Max(0, new FileInfo(row.SourcePath).Length);
+            }
+            catch
+            {
+                // ignore per-item stat failures
+            }
+        }
+
+        var copiedBytes = 0L;
+        progress?.Invoke(0, totalBytes);
+
         using var stream = new FileStream(zipPath, FileMode.Create, FileAccess.ReadWrite, FileShare.None);
         using var archive = new ZipArchive(stream, ZipArchiveMode.Create);
 
         var usedEntryNames = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
-        foreach (var row in rows)
+        foreach (var row in validRows)
         {
-            if (string.IsNullOrWhiteSpace(row.SourcePath) || !File.Exists(row.SourcePath))
-            {
-                continue;
-            }
-
-            if (ShouldExcludeFromCustomSelection(row.SourcePath))
-            {
-                continue;
-            }
-
             var entryName = row.IncludeFolderInArchive &&
                             !string.IsNullOrWhiteSpace(row.FolderName) &&
                             !string.Equals(row.FolderName, "-", StringComparison.Ordinal)
@@ -1546,8 +1749,17 @@ public partial class MainViewModel : ObservableObject
             var entry = archive.CreateEntry(entryName, CompressionLevel.Optimal);
             using var entryStream = entry.Open();
             using var sourceStream = new FileStream(row.SourcePath, FileMode.Open, FileAccess.Read, FileShare.Read);
-            sourceStream.CopyTo(entryStream);
+            var buffer = new byte[128 * 1024];
+            int read;
+            while ((read = sourceStream.Read(buffer, 0, buffer.Length)) > 0)
+            {
+                entryStream.Write(buffer, 0, read);
+                copiedBytes += read;
+                progress?.Invoke(copiedBytes, totalBytes);
+            }
         }
+
+        progress?.Invoke(totalBytes, totalBytes);
     }
 
     private static string GetUniqueEntryName(string entryName, ISet<string> usedEntryNames)
@@ -1841,16 +2053,25 @@ public partial class MainViewModel : ObservableObject
             {
                 var supportInfo = code.Equals(HelixQacCode, StringComparison.OrdinalIgnoreCase)
                     ? GetHelixQacSupportInfo(helix)
-                    : helix.ModuleSupport.TryGetValue(code, out var info)
-                        ? info
-                        : null;
-                var supported = supportInfo?.IsSupported ?? ExtraModuleCodes.Contains(code);
+                    : GetModuleSupportInfo(helix, code);
+                var supported = supportInfo?.IsSupported ?? IsDefaultSupportedWhenMissing(code);
                 var moduleVersion = supportInfo?.ModuleVersion ?? string.Empty;
                 var moduleVersionDisplay = moduleVersion;
                 if (code.Equals(HelixQacCode, StringComparison.OrdinalIgnoreCase))
                 {
                     moduleVersion = helix.Version;
                     moduleVersionDisplay = BuildHelixQacModuleVersionDisplay(helix, moduleVersion);
+                }
+                else if (code.Equals("DASHBOARD", StringComparison.OrdinalIgnoreCase)
+                         && string.IsNullOrWhiteSpace(moduleVersion))
+                {
+                    var defaultDashboardVersion = GetDefaultDashboardModuleVersion(helix.Version);
+                    if (!string.IsNullOrWhiteSpace(defaultDashboardVersion))
+                    {
+                        // 対応表に明示がない場合の既定表示
+                        moduleVersion = defaultDashboardVersion;
+                        moduleVersionDisplay = moduleVersion;
+                    }
                 }
                 var name = ModuleCatalog.GetDescription(code);
                 var isEnabled = supported;
@@ -1953,6 +2174,321 @@ public partial class MainViewModel : ObservableObject
             .Select(path => path.Trim())
             .Where(path => !string.IsNullOrWhiteSpace(path))
             .Distinct(StringComparer.OrdinalIgnoreCase)
+            .ToList();
+    }
+
+    private BulkSelectionWorkbookModel BuildBulkSelectionWorkbookModel()
+    {
+        var selectedHelixVersions = HelixVersions
+            .Where(helix => helix.Modules.Any(module => module.IsSelected))
+            .Select(helix => helix.Version)
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .ToList();
+        if (selectedHelixVersions.Count == 0 && !string.IsNullOrWhiteSpace(SelectedVersion?.Version))
+        {
+            selectedHelixVersions.Add(SelectedVersion.Version);
+        }
+
+        var includedCustomTabNames = CustomTabs
+            .Where(tab => tab.GetSelectedFiles().Count > 0)
+            .Select(tab => tab.Name)
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .ToList();
+        if (includedCustomTabNames.Count == 0 && !string.IsNullOrWhiteSpace(SelectedCustomTab?.Name))
+        {
+            includedCustomTabNames.Add(SelectedCustomTab.Name);
+        }
+
+        return new BulkSelectionWorkbookModel
+        {
+            TemplateVersion = "1.0",
+            CompanyName = CompanyName?.Trim() ?? string.Empty,
+            SelectedHelixVersion = SelectedVersion?.Version ?? string.Empty,
+            SelectedHelixVersions = selectedHelixVersions,
+            SearchText = SearchText ?? string.Empty,
+            MemoText = MemoText ?? string.Empty,
+            OutputBaseFolder = OutputBaseFolder?.Trim() ?? string.Empty,
+            MaxConcurrentTransfers = MaxConcurrentTransfers,
+            SelectedCustomTabName = SelectedCustomTab?.Name ?? string.Empty,
+            IncludedCustomTabNames = includedCustomTabNames,
+            ModuleSelections = HelixVersions
+                .SelectMany(helix => helix.Modules.Select(module => new BulkModuleSelectionRow
+                {
+                    IsSelected = module.IsSelected,
+                    HelixVersion = helix.Version,
+                    Code = module.Code,
+                    Name = module.Name,
+                    CompatibilityVersion = module.ModuleVersionDisplay,
+                    SupportedOsDisplay = module.OsDisplay,
+                    OsSelection = module.OsSelection,
+                    SupportStatus = module.SupportText,
+                    SelectedInstallerVersion = module.SelectedInstallerVersion,
+                    InstallerVersionOptions = module.InstallerVersionOptions
+                        .Where(version => !string.IsNullOrWhiteSpace(version))
+                        .Distinct(StringComparer.OrdinalIgnoreCase)
+                        .ToList()
+                }))
+                .ToList(),
+            ScanSelections = ScanSelectionItems
+                .Select(item => new BulkScanSelectionRow
+                {
+                    IsSelected = item.IsSelected,
+                    SourcePath = item.SourcePath,
+                    Code = item.Code,
+                    Version = item.Version,
+                    Os = item.Os.ToString()
+                })
+                .ToList(),
+            CustomTabStates = CloneCustomTabStates(BuildCustomTabStates()),
+            CustomZipPlans = CloneCustomZipPlans(GetCustomZipPlans())
+        };
+    }
+
+    private void ApplyImportedBulkSelection(BulkSelectionWorkbookModel imported)
+    {
+        _isApplyingSelectionHistory = true;
+        try
+        {
+            if (imported.HasBasicInfoSection)
+            {
+                CompanyName = imported.CompanyName ?? string.Empty;
+                SearchText = imported.SearchText ?? string.Empty;
+                MemoText = imported.MemoText ?? string.Empty;
+                if (!string.IsNullOrWhiteSpace(imported.OutputBaseFolder))
+                {
+                    OutputBaseFolder = imported.OutputBaseFolder.Trim();
+                }
+
+                if (imported.MaxConcurrentTransfers > 0)
+                {
+                    MaxConcurrentTransfers = imported.MaxConcurrentTransfers;
+                }
+            }
+
+            if (imported.HasModuleSelectionSection)
+            {
+                ClearModulesForImport();
+            }
+
+            if (imported.HasScanSelectionSection)
+            {
+                ClearScanItemsForImport();
+            }
+
+            if (imported.HasCustomTabsSection)
+            {
+                Settings.CustomTabStates = CloneCustomTabStates(imported.CustomTabStates ?? new List<CustomTabState>());
+                Settings.SelectedCustomTabName = imported.SelectedCustomTabName?.Trim() ?? string.Empty;
+                if (imported.HasCustomZipPlansSection)
+                {
+                    Settings.CustomZipPlans = CloneCustomZipPlans(imported.CustomZipPlans ?? new List<CustomZipPlan>());
+                }
+                else
+                {
+                    Settings.CustomZipPlans = new List<CustomZipPlan>();
+                }
+
+                RestoreCustomStateFromSettings();
+            }
+            else if (imported.HasCustomZipPlansSection)
+            {
+                SetCustomZipPlans(CloneCustomZipPlans(imported.CustomZipPlans ?? new List<CustomZipPlan>()));
+            }
+
+            var missingModules = 0;
+            if (imported.HasModuleSelectionSection)
+            {
+                missingModules = ApplyImportedModuleSelections(imported.ModuleSelections ?? new List<BulkModuleSelectionRow>());
+            }
+
+            var missingScanItems = 0;
+            if (imported.HasScanSelectionSection)
+            {
+                missingScanItems = ApplyImportedScanSelections(imported.ScanSelections ?? new List<BulkScanSelectionRow>());
+            }
+
+            var preferredHelix = imported.SelectedHelixVersions
+                .FirstOrDefault(version => !string.IsNullOrWhiteSpace(version))
+                ?? imported.SelectedHelixVersion;
+            if (!string.IsNullOrWhiteSpace(preferredHelix))
+            {
+                SelectedVersion = HelixVersions.FirstOrDefault(helix =>
+                                     helix.Version.Equals(preferredHelix, StringComparison.OrdinalIgnoreCase))
+                                 ?? HelixVersions.FirstOrDefault(helix =>
+                                     NormalizeHelixVersionLabel(helix.Version)
+                                         .Equals(NormalizeHelixVersionLabel(preferredHelix), StringComparison.OrdinalIgnoreCase))
+                                 ?? SelectedVersion;
+            }
+
+            _uploadListUserEdited = false;
+            QuickRequestResult = string.Empty;
+            UnresolvedTerms.Clear();
+            AmbiguousTerms.Clear();
+            UpdateBasket();
+            PersistCustomState();
+            _settingsService.Save(Settings);
+
+            if (missingModules > 0 || missingScanItems > 0)
+            {
+                WpfMessageBox.Show(
+                    $"取込は完了しましたが、一部が未反映です。モジュール未反映: {missingModules} 件 / スキャン未反映: {missingScanItems} 件",
+                    "Import情報",
+                    MessageBoxButton.OK,
+                    MessageBoxImage.Information);
+            }
+        }
+        finally
+        {
+            _isApplyingSelectionHistory = false;
+        }
+    }
+
+    private int ApplyImportedModuleSelections(IEnumerable<BulkModuleSelectionRow> rows)
+    {
+        var missing = 0;
+        var selectedRows = rows.Where(row => row.IsSelected).ToList();
+        foreach (var row in selectedRows)
+        {
+            var helix = HelixVersions.FirstOrDefault(item =>
+                NormalizeHelixVersionLabel(item.Version)
+                    .Equals(NormalizeHelixVersionLabel(row.HelixVersion), StringComparison.OrdinalIgnoreCase));
+            if (helix == null)
+            {
+                missing++;
+                continue;
+            }
+
+            var module = helix.Modules.FirstOrDefault(item =>
+                item.Code.Equals(row.Code, StringComparison.OrdinalIgnoreCase));
+            if (module == null || !module.IsEnabled)
+            {
+                missing++;
+                continue;
+            }
+
+            module.SetOsSelectionSilently(NormalizeOsSelectionForRestore(row.OsSelection, module));
+            if (!string.IsNullOrWhiteSpace(row.SelectedInstallerVersion) &&
+                module.InstallerVersionOptions.Any(version =>
+                    version.Equals(row.SelectedInstallerVersion, StringComparison.OrdinalIgnoreCase)))
+            {
+                module.SetSelectedInstallerVersionSilently(row.SelectedInstallerVersion);
+            }
+
+            module.SetSelectedSilently(true);
+        }
+
+        return missing;
+    }
+
+    private int ApplyImportedScanSelections(IEnumerable<BulkScanSelectionRow> rows)
+    {
+        var selectedStates = rows
+            .Where(row => row.IsSelected)
+            .Select(row => new SelectionScanState
+            {
+                SourcePath = row.SourcePath ?? string.Empty,
+                Code = row.Code ?? string.Empty,
+                Version = row.Version ?? string.Empty,
+                Os = row.Os ?? string.Empty
+            })
+            .ToList();
+        var selected = ResolveSelectedScanItems(selectedStates);
+        WithSelectionSyncSuppressed(() =>
+        {
+            foreach (var item in ScanSelectionItems)
+            {
+                item.IsSelected = selected.Contains(item);
+            }
+        });
+
+        return Math.Max(0, selectedStates.Count - selected.Count);
+    }
+
+    private void ClearModulesForImport()
+    {
+        WithSelectionSyncSuppressed(() =>
+        {
+            foreach (var helix in HelixVersions)
+            {
+                foreach (var module in helix.Modules)
+                {
+                    module.SetSelectedSilently(false);
+                }
+            }
+        });
+
+        ClearManualPicks();
+    }
+
+    private void ClearScanItemsForImport()
+    {
+        WithSelectionSyncSuppressed(() =>
+        {
+            foreach (var item in ScanSelectionItems)
+            {
+                item.IsSelected = false;
+            }
+        });
+    }
+
+    private static List<CustomTabState> CloneCustomTabStates(IEnumerable<CustomTabState> states)
+    {
+        var result = new List<CustomTabState>();
+        foreach (var state in states)
+        {
+            if (state == null || string.IsNullOrWhiteSpace(state.Name))
+            {
+                continue;
+            }
+
+            var clonedRows = new List<CustomTabRowState>();
+            foreach (var row in state.Rows ?? new List<CustomTabRowState>())
+            {
+                if (row == null || string.IsNullOrWhiteSpace(row.SourcePath))
+                {
+                    continue;
+                }
+
+                clonedRows.Add(new CustomTabRowState
+                {
+                    IsSelected = row.IsSelected,
+                    Folder = row.Folder ?? string.Empty,
+                    FileName = row.FileName ?? string.Empty,
+                    SourcePath = row.SourcePath ?? string.Empty,
+                    ColumnValues = new Dictionary<string, string>(
+                        row.ColumnValues ?? new Dictionary<string, string>(),
+                        StringComparer.OrdinalIgnoreCase)
+                });
+            }
+
+            result.Add(new CustomTabState
+            {
+                Name = state.Name.Trim(),
+                ColumnsInput = state.ColumnsInput ?? string.Empty,
+                NewDirectoryPath = state.NewDirectoryPath ?? string.Empty,
+                Rows = clonedRows
+            });
+        }
+
+        return result;
+    }
+
+    private static List<CustomZipPlan> CloneCustomZipPlans(IEnumerable<CustomZipPlan> plans)
+    {
+        return plans
+            .Where(plan => !string.IsNullOrWhiteSpace(plan.TabName) && !string.IsNullOrWhiteSpace(plan.ArchiveBaseName))
+            .Select(plan => new CustomZipPlan(
+                plan.TabName.Trim(),
+                plan.ArchiveBaseName.Trim(),
+                plan.Items
+                    .Where(item => !string.IsNullOrWhiteSpace(item.SourcePath) && !string.IsNullOrWhiteSpace(item.FileName))
+                    .Select(item => new CustomZipPlanItem(
+                        item.SourcePath,
+                        item.FolderName,
+                        item.FileName,
+                        item.IncludeFolderInArchive))
+                    .ToList()))
+            .Where(plan => plan.Items.Count > 0)
             .ToList();
     }
 
@@ -3100,7 +3636,8 @@ public partial class MainViewModel : ObservableObject
                 }
             }
 
-            if (moduleCodes.Any(existing => existing.Equals(code, StringComparison.OrdinalIgnoreCase)))
+            if (moduleCodes.Any(existing =>
+                    NormalizeModuleCode(existing).Equals(NormalizeModuleCode(code), StringComparison.OrdinalIgnoreCase)))
             {
                 continue;
             }
@@ -3116,7 +3653,8 @@ public partial class MainViewModel : ObservableObject
 
     private static string GetSelectionTargetCode(string code)
     {
-        return IsHelixQacBundleCode(code) ? HelixQacCode : code;
+        var normalized = NormalizeModuleCode(code);
+        return IsHelixQacBundleCode(normalized) ? HelixQacCode : normalized;
     }
 
     private static List<string> NormalizeModuleCodes(IEnumerable<string> codes)
@@ -3124,8 +3662,14 @@ public partial class MainViewModel : ObservableObject
         var normalized = new List<string>();
         var seen = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
         var addedHelixQac = false;
-        foreach (var code in codes)
+        foreach (var rawCode in codes)
         {
+            var code = NormalizeModuleCode(rawCode);
+            if (string.IsNullOrWhiteSpace(code))
+            {
+                continue;
+            }
+
             if (IsHelixQacBundleCode(code))
             {
                 if (!addedHelixQac && seen.Add(HelixQacCode))
@@ -3144,6 +3688,22 @@ public partial class MainViewModel : ObservableObject
         }
 
         return normalized;
+    }
+
+    private static string NormalizeModuleCode(string code)
+    {
+        if (string.IsNullOrWhiteSpace(code))
+        {
+            return string.Empty;
+        }
+
+        var trimmed = code.Trim();
+        if (CanonicalModuleCodeMap.TryGetValue(trimmed, out var canonical))
+        {
+            return canonical;
+        }
+
+        return trimmed;
     }
 
     private static ModuleSupportInfo? GetHelixQacSupportInfo(HelixVersionData helix)
@@ -3249,8 +3809,7 @@ public partial class MainViewModel : ObservableObject
 
     private static bool IsInstallerVersionSelectable(string code)
     {
-        return code.Equals("VALIDATE", StringComparison.OrdinalIgnoreCase) ||
-               code.Equals("DASHBOARD", StringComparison.OrdinalIgnoreCase);
+        return false;
     }
 
     private static string GetRequestedVersion(ModuleRowViewModel module)
@@ -3485,7 +4044,7 @@ public partial class MainViewModel : ObservableObject
             }
         }
 
-        return codes.Distinct(StringComparer.OrdinalIgnoreCase).ToList();
+        return NormalizeModuleCodes(codes);
     }
 
     private HashSet<string> GetAllowedModuleCodesForScan()
@@ -3767,7 +4326,7 @@ public partial class MainViewModel : ObservableObject
 
     private void UpdateInstallerVersionOptions(ModuleRowViewModel module)
     {
-        if (!IsInstallerVersionSelectable(module.Code))
+        if (!IsInstallerVersionSelectable(module.Code) || !module.IsSupported)
         {
             if (module.HasInstallerVersionOptions)
             {
@@ -3784,6 +4343,12 @@ public partial class MainViewModel : ObservableObject
             .Distinct(StringComparer.OrdinalIgnoreCase)
             .ToList();
 
+        if (!string.IsNullOrWhiteSpace(module.ModuleVersion) &&
+            !versions.Contains(module.ModuleVersion, StringComparer.OrdinalIgnoreCase))
+        {
+            versions.Add(module.ModuleVersion);
+        }
+
         if (versions.Count == 0)
         {
             module.SetInstallerVersionOptions(Array.Empty<string>());
@@ -3791,19 +4356,117 @@ public partial class MainViewModel : ObservableObject
         }
 
         versions.Sort((left, right) => VersionUtil.CompareVersionLike(right, left));
+        if (!string.IsNullOrWhiteSpace(module.ModuleVersion))
+        {
+            var preferredIndex = versions.FindIndex(version =>
+                version.Equals(module.ModuleVersion, StringComparison.OrdinalIgnoreCase));
+            if (preferredIndex > 0)
+            {
+                var preferred = versions[preferredIndex];
+                versions.RemoveAt(preferredIndex);
+                versions.Insert(0, preferred);
+            }
+        }
+
         module.SetInstallerVersionOptions(versions);
+    }
+
+    private static string GetDefaultDashboardModuleVersion(string helixVersion)
+    {
+        if (VersionUtil.IsAtLeast(helixVersion, "2023.3"))
+        {
+            return "2023.3-J";
+        }
+
+        if (VersionUtil.IsAtLeast(helixVersion, "2023.2"))
+        {
+            return "2023.2-J";
+        }
+
+        return string.Empty;
     }
 
     private static IEnumerable<string> GetModuleCodeCandidates(string code)
     {
-        yield return code;
-        if (ModuleCodeAliases.TryGetValue(code, out var aliases))
+        if (string.IsNullOrWhiteSpace(code))
         {
-            foreach (var alias in aliases)
+            yield break;
+        }
+
+        var seen = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+
+        static string TrimCode(string value) => value.Trim();
+
+        void AddCandidate(string candidate)
+        {
+            if (string.IsNullOrWhiteSpace(candidate))
             {
-                yield return alias;
+                return;
+            }
+
+            var trimmed = TrimCode(candidate);
+            if (seen.Add(trimmed))
+            {
+                // local function can't yield directly
             }
         }
+
+        var rawCode = TrimCode(code);
+        AddCandidate(rawCode);
+        var normalizedCode = NormalizeModuleCode(rawCode);
+        AddCandidate(normalizedCode);
+
+        if (ModuleCodeAliases.TryGetValue(rawCode, out var rawAliases))
+        {
+            foreach (var alias in rawAliases)
+            {
+                AddCandidate(alias);
+                AddCandidate(NormalizeModuleCode(alias));
+            }
+        }
+
+        if (!rawCode.Equals(normalizedCode, StringComparison.OrdinalIgnoreCase) &&
+            ModuleCodeAliases.TryGetValue(normalizedCode, out var normalizedAliases))
+        {
+            foreach (var alias in normalizedAliases)
+            {
+                AddCandidate(alias);
+                AddCandidate(NormalizeModuleCode(alias));
+            }
+        }
+
+        foreach (var candidate in seen)
+        {
+            yield return candidate;
+        }
+    }
+
+    private static ModuleSupportInfo? GetModuleSupportInfo(HelixVersionData helix, string code)
+    {
+        foreach (var candidate in GetModuleCodeCandidates(code))
+        {
+            if (helix.ModuleSupport.TryGetValue(candidate, out var info))
+            {
+                return info;
+            }
+        }
+
+        return null;
+    }
+
+    private static bool IsDefaultSupportedWhenMissing(string code)
+    {
+        if (code.Equals("DASHBOARD", StringComparison.OrdinalIgnoreCase))
+        {
+            return true;
+        }
+
+        if (code.Equals("VALIDATE", StringComparison.OrdinalIgnoreCase))
+        {
+            return false;
+        }
+
+        return ExtraModuleCodes.Contains(code);
     }
 
     private void SyncBundleSelection(ModuleRowViewModel module, bool isSelected)

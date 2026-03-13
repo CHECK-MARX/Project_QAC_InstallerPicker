@@ -9,7 +9,7 @@ public static class CompatibilityRules
         new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)
         {
             // MVP: "○○以降" 注記の最小対応バージョンをここに定数で持つ
-            ["VALIDATE"] = "2024.1"
+            ["DASHBOARD"] = "2023.2"
         };
 
     public static bool TryCheckMinVersion(string helixVersion, string moduleCode, out string? reason)

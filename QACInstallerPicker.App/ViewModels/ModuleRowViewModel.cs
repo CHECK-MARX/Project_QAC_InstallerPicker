@@ -129,6 +129,9 @@ public partial class ModuleRowViewModel : ObservableObject
     [ObservableProperty]
     private string _downloadStatusReason = string.Empty;
 
+    [ObservableProperty]
+    private bool _isInstallerMissingInScan;
+
     public event EventHandler<ModuleSelectionChangedEventArgs>? SelectionChanged;
     public event EventHandler<ModuleOsSelectionChangedEventArgs>? OsSelectionChanged;
     public event EventHandler<ModuleInstallerVersionChangedEventArgs>? InstallerVersionChanged;
@@ -259,6 +262,7 @@ public partial class ModuleRowViewModel : ObservableObject
     {
         if (!_baseIsEnabled)
         {
+            IsInstallerMissingInScan = false;
             IsEnabled = false;
             DisabledReason = _baseDisabledReason;
             return;
@@ -266,6 +270,7 @@ public partial class ModuleRowViewModel : ObservableObject
 
         if (available == null)
         {
+            IsInstallerMissingInScan = false;
             IsEnabled = true;
             DisabledReason = _baseDisabledReason;
             return;
@@ -273,11 +278,13 @@ public partial class ModuleRowViewModel : ObservableObject
 
         if (available.Value)
         {
+            IsInstallerMissingInScan = false;
             IsEnabled = true;
             DisabledReason = _baseDisabledReason;
         }
         else
         {
+            IsInstallerMissingInScan = true;
             IsEnabled = false;
             DisabledReason = string.IsNullOrWhiteSpace(reason) ? "共有スキャン未検出" : reason;
             SetSelectedSilently(false);

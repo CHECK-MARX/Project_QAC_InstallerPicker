@@ -1,6 +1,7 @@
 using System;
 using System.ComponentModel;
 using System.Drawing;
+using System.Linq;
 using System.Threading.Tasks;
 using System.Windows;
 using System.Windows.Controls;
@@ -153,7 +154,22 @@ public partial class MainWindow : Window
 
     private async void OpenSettingsDialog()
     {
-        var settingsViewModel = new SettingsViewModel(_viewModel.Settings, new SettingsService());
+        var helixVersions = _viewModel.HelixVersions
+            .Select(item => item.Version)
+            .Where(value => !string.IsNullOrWhiteSpace(value))
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .ToList();
+        var customTabs = _viewModel.CustomTabs
+            .Select(item => item.Name)
+            .Where(value => !string.IsNullOrWhiteSpace(value))
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .ToList();
+
+        var settingsViewModel = new SettingsViewModel(
+            _viewModel.Settings,
+            new SettingsService(),
+            helixVersions,
+            customTabs);
         var window = new SettingsWindow(settingsViewModel)
         {
             Owner = this
