@@ -8,6 +8,9 @@ using CommunityToolkit.Mvvm.Input;
 using QACInstallerPicker.App.Models;
 using QACInstallerPicker.App.Services;
 using Forms = System.Windows.Forms;
+using WpfMessageBox = System.Windows.MessageBox;
+using WpfMessageBoxButton = System.Windows.MessageBoxButton;
+using WpfMessageBoxImage = System.Windows.MessageBoxImage;
 using Win32 = Microsoft.Win32;
 
 namespace QACInstallerPicker.App.ViewModels;
@@ -29,6 +32,7 @@ public partial class SettingsViewModel : ObservableObject
         _excelPath = settings.ExcelPath;
         _uncRoot = settings.UncRoot;
         _outputBaseFolder = settings.OutputBaseFolder;
+        _shipmentHistoryExcelPath = settings.ShipmentHistoryExcelPath;
         _maxConcurrentTransfers = settings.MaxConcurrentTransfers;
 
         var bulkExcel = settings.BulkExcelTemplateOptions ?? new BulkExcelTemplateOptions();
@@ -95,6 +99,9 @@ public partial class SettingsViewModel : ObservableObject
     private string _outputBaseFolder;
 
     [ObservableProperty]
+    private string _shipmentHistoryExcelPath;
+
+    [ObservableProperty]
     private int _maxConcurrentTransfers;
 
     [ObservableProperty]
@@ -120,9 +127,32 @@ public partial class SettingsViewModel : ObservableObject
     [RelayCommand]
     private void Save()
     {
+        var shipmentHistoryExcelPath = ShipmentHistoryExcelPath?.Trim() ?? string.Empty;
+        if (!string.IsNullOrWhiteSpace(shipmentHistoryExcelPath) &&
+            !shipmentHistoryExcelPath.EndsWith(".xlsx", StringComparison.OrdinalIgnoreCase))
+        {
+            WpfMessageBox.Show(
+                "送付履歴Excelは .xlsx ファイルを指定してください。",
+                "設定エラー",
+                WpfMessageBoxButton.OK,
+                WpfMessageBoxImage.Warning);
+            return;
+        }
+
+        if (!string.IsNullOrWhiteSpace(shipmentHistoryExcelPath) && !File.Exists(shipmentHistoryExcelPath))
+        {
+            WpfMessageBox.Show(
+                $"送付履歴Excelが見つかりません: {shipmentHistoryExcelPath}",
+                "設定エラー",
+                WpfMessageBoxButton.OK,
+                WpfMessageBoxImage.Warning);
+            return;
+        }
+
         _settings.ExcelPath = ExcelPath?.Trim() ?? string.Empty;
         _settings.UncRoot = UncRoot?.Trim() ?? string.Empty;
         _settings.OutputBaseFolder = OutputBaseFolder?.Trim() ?? string.Empty;
+        _settings.ShipmentHistoryExcelPath = shipmentHistoryExcelPath;
         _settings.MaxConcurrentTransfers = Math.Max(1, MaxConcurrentTransfers);
         _settings.BulkExcelTemplateOptions = new BulkExcelTemplateOptions
         {
@@ -155,6 +185,7 @@ public partial class SettingsViewModel : ObservableObject
         ExcelPath = string.Empty;
         UncRoot = string.Empty;
         OutputBaseFolder = string.Empty;
+        ShipmentHistoryExcelPath = string.Empty;
         MaxConcurrentTransfers = 2;
         IncludeBasicInfoInBulkExcel = true;
         IncludeModuleSelectionInBulkExcel = true;
@@ -219,6 +250,27 @@ public partial class SettingsViewModel : ObservableObject
         if (dialog.ShowDialog() == Forms.DialogResult.OK)
         {
             OutputBaseFolder = dialog.SelectedPath;
+        }
+    }
+
+    [RelayCommand]
+    private void BrowseShipmentHistoryExcel()
+    {
+        var dialog = new Win32.OpenFileDialog
+        {
+            Filter = "Excel files (*.xlsx)|*.xlsx|All files (*.*)|*.*",
+            FileName = ShipmentHistoryExcelPath
+        };
+
+        var directory = Path.GetDirectoryName(ShipmentHistoryExcelPath);
+        if (!string.IsNullOrWhiteSpace(directory) && Directory.Exists(directory))
+        {
+            dialog.InitialDirectory = directory;
+        }
+
+        if (dialog.ShowDialog() == true)
+        {
+            ShipmentHistoryExcelPath = dialog.FileName;
         }
     }
 }

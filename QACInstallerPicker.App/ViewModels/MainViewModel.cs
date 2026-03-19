@@ -35,6 +35,7 @@ public partial class MainViewModel : ObservableObject
     private readonly DatabaseService _databaseService;
     private readonly HashService _hashService;
     private readonly CopyService _copyService;
+    private readonly ShipmentHistoryExcelService _shipmentHistoryExcelService;
     private TransferManager? _transferManager;
 
     private CompatibilityData? _compatibility;
@@ -127,9 +128,19 @@ public partial class MainViewModel : ObservableObject
         "SECCCM"
     };
     private const int TransferTabIndex = 2;
+    private const int ShipmentHistoryTabIndex = 4;
     private const string ComplianceModuleSuffix = "コンプライアンスモジュール";
     private const int SelectionHistoryLimit = 5;
     private const string AlreadyDownloadedReason = "既にダウンロード済み（ダブルクリックで再DLに含める）";
+    private static readonly IReadOnlyList<string> ShipmentCategoryOptionsList =
+    [
+        "評価",
+        "既存顧客",
+        "商談",
+        "保守",
+        "再送",
+        "その他"
+    ];
 
     public MainViewModel()
     {
@@ -141,6 +152,7 @@ public partial class MainViewModel : ObservableObject
         _databaseService = new DatabaseService();
         _hashService = new HashService(_databaseService);
         _copyService = new CopyService();
+        _shipmentHistoryExcelService = new ShipmentHistoryExcelService();
 
         _settings = _settingsService.Load();
         _maxConcurrentTransfers = _settings.MaxConcurrentTransfers;
@@ -159,6 +171,7 @@ public partial class MainViewModel : ObservableObject
         ScanSelectionItems = new ObservableCollection<ScanSelectionItemViewModel>();
         CustomTabs = new ObservableCollection<CustomTabViewModel>();
         SelectionStateHistoryEntries = new ObservableCollection<SelectionStateHistoryEntry>();
+        ShipmentHistoryItems = new ObservableCollection<BasketItemViewModel>();
 
         RestoreCustomStateFromSettings();
         LoadSelectionStateHistoryFromSettings();
@@ -177,6 +190,8 @@ public partial class MainViewModel : ObservableObject
     public ObservableCollection<ScanSelectionItemViewModel> ScanSelectionItems { get; }
     public ObservableCollection<CustomTabViewModel> CustomTabs { get; }
     public ObservableCollection<SelectionStateHistoryEntry> SelectionStateHistoryEntries { get; }
+    public ObservableCollection<BasketItemViewModel> ShipmentHistoryItems { get; }
+    public IReadOnlyList<string> ShipmentCategoryOptions => ShipmentCategoryOptionsList;
 
     public void SetCustomZipPlans(IEnumerable<CustomZipPlan> plans)
     {
@@ -290,6 +305,39 @@ public partial class MainViewModel : ObservableObject
     [ObservableProperty]
     private SelectionStateHistoryEntry? _selectedSelectionStateHistoryEntry;
 
+    [ObservableProperty]
+    private BasketItemViewModel? _selectedShipmentHistoryItem;
+
+    [ObservableProperty]
+    private DateTime _shipmentDate = DateTime.Today;
+
+    [ObservableProperty]
+    private string _shipmentCompanyName = string.Empty;
+
+    [ObservableProperty]
+    private string _shipmentHelixVersion = string.Empty;
+
+    [ObservableProperty]
+    private string _shipmentCode = string.Empty;
+
+    [ObservableProperty]
+    private string _shipmentName = string.Empty;
+
+    [ObservableProperty]
+    private string _shipmentCompatibilityVersion = string.Empty;
+
+    [ObservableProperty]
+    private string _shipmentSelectedOs = string.Empty;
+
+    [ObservableProperty]
+    private string _shipmentInstallerName = string.Empty;
+
+    [ObservableProperty]
+    private string _shipmentPersonName = string.Empty;
+
+    [ObservableProperty]
+    private string _shipmentCategory = string.Empty;
+
     private bool _suppressUploadListEdit;
     private bool _uploadListUserEdited;
 
@@ -332,6 +380,9 @@ public partial class MainViewModel : ObservableObject
             return $"対応表: {Settings.ExcelPath} | 共有: {Settings.UncRoot}";
         }
     }
+
+    public string ShipmentHistoryExcelPath => Settings.ShipmentHistoryExcelPath;
+    public bool IsShipmentHistoryExcelConfigured => !string.IsNullOrWhiteSpace(Settings.ShipmentHistoryExcelPath);
 
     public string AppTitle => $"QAC インストーラ選定ツール v{AppVersion}";
 
@@ -388,6 +439,8 @@ public partial class MainViewModel : ObservableObject
 
         OnPropertyChanged(nameof(SettingsSummary));
         OnPropertyChanged(nameof(OutputFolderPreview));
+        OnPropertyChanged(nameof(ShipmentHistoryExcelPath));
+        OnPropertyChanged(nameof(IsShipmentHistoryExcelConfigured));
     }
 
     public async Task ApplySettingsAndReloadAsync()
@@ -1460,6 +1513,237 @@ public partial class MainViewModel : ObservableObject
         TransferSummary.Update(TransferItems, MaxConcurrentTransfers);
         SelectedMainTabIndex = TransferTabIndex;
         await RefreshHistoryAsync();
+    }
+
+    [RelayCommand]
+    private void ReflectSelectionToShipmentHistory()
+    {
+        RefreshShipmentHistoryItems(keepCurrentSelection: true, resetShipmentDate: true);
+        if (ShipmentHistoryItems.Count == 0)
+        {
+            WpfMessageBox.Show(
+                "送付履歴へ反映できる選定項目がありません。選定タブで対象を選んでください。",
+                "情報",
+                MessageBoxButton.OK,
+                MessageBoxImage.Information);
+        }
+    }
+
+    [RelayCommand]
+    private void WriteShipmentHistory()
+    {
+        if (!TryBuildShipmentHistoryRecords(out var records, out var errorMessage))
+        {
+            WpfMessageBox.Show(errorMessage, "入力エラー", MessageBoxButton.OK, MessageBoxImage.Warning);
+            return;
+        }
+
+        try
+        {
+            _shipmentHistoryExcelService.AppendMany(Settings.ShipmentHistoryExcelPath, records);
+            WpfMessageBox.Show($"送付履歴に {records.Count} 件記録しました。", "完了", MessageBoxButton.OK, MessageBoxImage.Information);
+            ShipmentPersonName = string.Empty;
+            RefreshShipmentHistoryItems(keepCurrentSelection: true);
+        }
+        catch (IOException ex)
+        {
+            WpfMessageBox.Show(
+                $"送付履歴Excelに書き込めません。Excelが開かれていないか確認してください。\n{ex.Message}",
+                "書込エラー",
+                MessageBoxButton.OK,
+                MessageBoxImage.Error);
+        }
+        catch (UnauthorizedAccessException ex)
+        {
+            WpfMessageBox.Show(
+                $"送付履歴Excelへのアクセスが拒否されました。\n{ex.Message}",
+                "アクセスエラー",
+                MessageBoxButton.OK,
+                MessageBoxImage.Error);
+        }
+        catch (Exception ex)
+        {
+            WpfMessageBox.Show(
+                $"送付履歴への記録に失敗しました。\n{ex.Message}",
+                "書込エラー",
+                MessageBoxButton.OK,
+                MessageBoxImage.Error);
+        }
+    }
+
+    private bool TryBuildShipmentHistoryRecords(out List<ShipmentHistoryRecord> records, out string errorMessage)
+    {
+        records = [];
+        errorMessage = string.Empty;
+
+        if (ShipmentDate == default)
+        {
+            errorMessage = "送付日を入力してください。";
+            return false;
+        }
+
+        var company = (ShipmentCompanyName ?? string.Empty).Trim();
+        if (string.IsNullOrWhiteSpace(company))
+        {
+            errorMessage = "会社名が未入力です。選定内容を確認してください。";
+            return false;
+        }
+
+        var person = (ShipmentPersonName ?? string.Empty).Trim();
+        if (string.IsNullOrWhiteSpace(person))
+        {
+            errorMessage = "個人名を入力してください。";
+            return false;
+        }
+
+        var category = (ShipmentCategory ?? string.Empty).Trim();
+        if (string.IsNullOrWhiteSpace(category))
+        {
+            errorMessage = "区分を選択してください。";
+            return false;
+        }
+
+        if (ShipmentHistoryItems.Count == 0)
+        {
+            errorMessage = "選定内容が未反映です。『選定内容を再読込』を実行してください。";
+            return false;
+        }
+
+        var excelPath = (Settings.ShipmentHistoryExcelPath ?? string.Empty).Trim();
+        if (string.IsNullOrWhiteSpace(excelPath))
+        {
+            errorMessage = "設定画面で『送付履歴Excel』を設定してください。";
+            return false;
+        }
+
+        if (!excelPath.EndsWith(".xlsx", StringComparison.OrdinalIgnoreCase))
+        {
+            errorMessage = "送付履歴Excelは .xlsx ファイルを指定してください。";
+            return false;
+        }
+
+        if (!File.Exists(excelPath))
+        {
+            errorMessage = $"送付履歴Excelが見つかりません: {excelPath}";
+            return false;
+        }
+
+        var targetItems = ShipmentHistoryItems
+            .Where(item => !item.IsMissing && item.IsShipmentIncluded)
+            .ToList();
+
+        if (targetItems.Count == 0)
+        {
+            errorMessage = "記入対象が選択されていません。記入する行にチェックを入れてください。";
+            return false;
+        }
+
+        var invalidItems = new List<string>();
+        foreach (var item in targetItems)
+        {
+            if (string.IsNullOrWhiteSpace(item.HelixVersion)
+                || string.IsNullOrWhiteSpace(item.Code)
+                || string.IsNullOrWhiteSpace(item.Name)
+                || string.IsNullOrWhiteSpace(item.ModuleVersion)
+                || string.IsNullOrWhiteSpace(item.Os)
+                || string.IsNullOrWhiteSpace(item.AssetFileName))
+            {
+                invalidItems.Add(item.Code);
+                continue;
+            }
+
+            records.Add(new ShipmentHistoryRecord
+            {
+                ShipmentDate = ShipmentDate.Date,
+                CompanyName = company,
+                PersonName = person,
+                Category = category,
+                HelixVersion = item.HelixVersion,
+                Code = item.Code,
+                Name = item.Name,
+                CompatibilityVersion = item.ModuleVersion,
+                SelectedOs = item.Os,
+                InstallerName = item.AssetFileName
+            });
+        }
+
+        if (records.Count == 0)
+        {
+            errorMessage = "選定内容の必須項目が不足しています。『選定内容を再読込』を実行してください。";
+            return false;
+        }
+
+        if (invalidItems.Count > 0)
+        {
+            errorMessage = $"選定内容の必須項目が不足しています。対象: {string.Join(", ", invalidItems)}";
+            return false;
+        }
+
+        return true;
+    }
+
+    private void RefreshShipmentHistoryItems(bool keepCurrentSelection = true, bool resetShipmentDate = false)
+    {
+        var previousKey = keepCurrentSelection && SelectedShipmentHistoryItem != null
+            ? GetShipmentHistoryItemKey(SelectedShipmentHistoryItem)
+            : string.Empty;
+        var includeStates = keepCurrentSelection
+            ? ShipmentHistoryItems.ToDictionary(
+                GetShipmentHistoryItemKey,
+                item => item.IsShipmentIncluded,
+                StringComparer.OrdinalIgnoreCase)
+            : new Dictionary<string, bool>(StringComparer.OrdinalIgnoreCase);
+
+        ShipmentHistoryItems.Clear();
+        foreach (var item in BasketItems.Where(item => !item.IsMissing))
+        {
+            var key = GetShipmentHistoryItemKey(item);
+            item.IsShipmentIncluded = includeStates.TryGetValue(key, out var include) ? include : true;
+            ShipmentHistoryItems.Add(item);
+        }
+
+        if (resetShipmentDate || ShipmentDate == default)
+        {
+            ShipmentDate = DateTime.Today;
+        }
+
+        ShipmentCompanyName = CompanyName?.Trim() ?? string.Empty;
+
+        BasketItemViewModel? selected = null;
+        if (!string.IsNullOrWhiteSpace(previousKey))
+        {
+            selected = ShipmentHistoryItems.FirstOrDefault(item =>
+                GetShipmentHistoryItemKey(item).Equals(previousKey, StringComparison.OrdinalIgnoreCase));
+        }
+
+        SelectedShipmentHistoryItem = selected ?? ShipmentHistoryItems.FirstOrDefault();
+        ApplyShipmentHistorySelection(SelectedShipmentHistoryItem);
+    }
+
+    private void ApplyShipmentHistorySelection(BasketItemViewModel? item)
+    {
+        if (item == null)
+        {
+            ShipmentHelixVersion = string.Empty;
+            ShipmentCode = string.Empty;
+            ShipmentName = string.Empty;
+            ShipmentCompatibilityVersion = string.Empty;
+            ShipmentSelectedOs = string.Empty;
+            ShipmentInstallerName = string.Empty;
+            return;
+        }
+
+        ShipmentHelixVersion = item.HelixVersion;
+        ShipmentCode = item.Code;
+        ShipmentName = item.Name;
+        ShipmentCompatibilityVersion = item.ModuleVersion;
+        ShipmentSelectedOs = item.Os;
+        ShipmentInstallerName = item.AssetFileName;
+    }
+
+    private static string GetShipmentHistoryItemKey(BasketItemViewModel item)
+    {
+        return $"{item.HelixVersion}|{item.Code}|{item.AssetFileName}|{item.SourcePath}";
     }
 
     private string BuildQueueConfirmMessage(IReadOnlyList<BasketItemViewModel> selectedItems, string outputRoot)
@@ -3140,6 +3424,7 @@ public partial class MainViewModel : ObservableObject
         ApplyModuleDownloadLockStates(moduleDownloadStates);
         ApplyCustomTabDownloadLockStates(customTabLockedPaths);
         UpdateUploadListText();
+        RefreshShipmentHistoryItems(keepCurrentSelection: true);
     }
 
     private void ResetModuleDownloadLocks()
@@ -5716,10 +6001,24 @@ public partial class MainViewModel : ObservableObject
         UpdateBasket();
     }
 
+    partial void OnSelectedMainTabIndexChanged(int value)
+    {
+        if (value == ShipmentHistoryTabIndex)
+        {
+            RefreshShipmentHistoryItems(keepCurrentSelection: true, resetShipmentDate: true);
+        }
+    }
+
+    partial void OnSelectedShipmentHistoryItemChanged(BasketItemViewModel? value)
+    {
+        ApplyShipmentHistorySelection(value);
+    }
+
     partial void OnCompanyNameChanged(string value)
     {
         _redownloadUnlockedDestinationPaths.Clear();
         OnPropertyChanged(nameof(OutputFolderPreview));
+        ShipmentCompanyName = value?.Trim() ?? string.Empty;
         if (!_isApplyingSelectionHistory && !_isRestoringCustomState)
         {
             UpdateBasket();
@@ -5731,6 +6030,8 @@ public partial class MainViewModel : ObservableObject
         _redownloadUnlockedDestinationPaths.Clear();
         OnPropertyChanged(nameof(SettingsSummary));
         OnPropertyChanged(nameof(OutputFolderPreview));
+        OnPropertyChanged(nameof(ShipmentHistoryExcelPath));
+        OnPropertyChanged(nameof(IsShipmentHistoryExcelConfigured));
         MaxConcurrentTransfers = value.MaxConcurrentTransfers;
         MaxConcurrentTransfersInput = value.MaxConcurrentTransfers.ToString();
         if (!_isApplyingSelectionHistory && !_isRestoringCustomState)

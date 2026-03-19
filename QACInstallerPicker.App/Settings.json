@@ -2,6 +2,7 @@
   "ExcelPath": "",
   "UncRoot": "",
   "OutputBaseFolder": "",
+  "ShipmentHistoryExcelPath": "",
   "MaxConcurrentTransfers": 2,
   "SelectedCustomTabName": "",
   "CustomTabStates": [],

@@ -49,4 +49,7 @@ public partial class BasketItemViewModel : ObservableObject
 
     [ObservableProperty]
     private bool _isAlreadyDownloaded;
+
+    [ObservableProperty]
+    private bool _isShipmentIncluded = true;
 }

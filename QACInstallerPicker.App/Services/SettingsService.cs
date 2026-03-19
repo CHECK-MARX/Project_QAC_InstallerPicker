@@ -24,6 +24,7 @@ public class SettingsService
             settings.MaxConcurrentTransfers = 2;
         }
 
+        settings.ShipmentHistoryExcelPath ??= string.Empty;
         settings.SelectedCustomTabName ??= string.Empty;
         settings.CustomTabStates ??= new();
         settings.CustomZipPlans ??= new();
