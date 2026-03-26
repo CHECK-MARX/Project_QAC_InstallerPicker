@@ -568,7 +568,7 @@
                 </Grid>
             </TabItem>
 
-            <TabItem Header="送付履歴">
+            <TabItem Header="送付入力">
                 <Grid Margin="8">
                     <Grid.RowDefinitions>
                         <RowDefinition Height="Auto" />
@@ -669,6 +669,402 @@
                             </StackPanel>
                         </Grid>
                     </Grid>
+                </Grid>
+            </TabItem>
+
+            <TabItem Header="送付履歴">
+                <Grid Margin="8">
+                    <Grid.RowDefinitions>
+                        <RowDefinition Height="Auto" />
+                        <RowDefinition Height="Auto" />
+                        <RowDefinition Height="*" />
+                    </Grid.RowDefinitions>
+
+                    <StackPanel Grid.Row="0" Orientation="Horizontal" Margin="0,0,0,8" VerticalAlignment="Center">
+                        <Button Content="再読込" Command="{Binding RefreshShipmentHistoryViewCommand}" Margin="0,0,8,0" />
+                        <Button Content="フィルタークリア" Command="{Binding ClearShipmentHistoryViewFiltersCommand}" Margin="0,0,12,0" />
+                        <TextBlock Text="送付履歴Excel:" VerticalAlignment="Center" Margin="0,0,6,0" />
+                        <TextBlock Text="{Binding ShipmentHistoryExcelPath}" VerticalAlignment="Center" Foreground="#555" Margin="0,0,16,0" />
+                        <TextBlock Text="{Binding ShipmentHistoryViewSummary}" VerticalAlignment="Center" Foreground="#333" />
+                    </StackPanel>
+
+                    <GroupBox Grid.Row="1" Header="表示条件 / 列フィルター" Margin="0,0,0,8">
+                        <Grid>
+                            <Grid.RowDefinitions>
+                                <RowDefinition Height="Auto" />
+                                <RowDefinition Height="Auto" />
+                            </Grid.RowDefinitions>
+
+                            <WrapPanel Grid.Row="0" Margin="0,0,0,6">
+                                <TextBlock Text="期間" VerticalAlignment="Center" Margin="0,0,6,0" />
+                                <ComboBox Width="120"
+                                          ItemsSource="{Binding ShipmentHistoryPeriodOptions}"
+                                          SelectedItem="{Binding ShipmentHistoryPeriod, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}"
+                                          Margin="0,0,12,0" />
+                                <TextBlock Text="開始日" VerticalAlignment="Center" Margin="0,0,6,0" />
+                                <DatePicker SelectedDate="{Binding ShipmentHistoryFromDate, Mode=TwoWay}" Margin="0,0,12,0" />
+                                <TextBlock Text="終了日" VerticalAlignment="Center" Margin="0,0,6,0" />
+                                <DatePicker SelectedDate="{Binding ShipmentHistoryToDate, Mode=TwoWay}" />
+                            </WrapPanel>
+
+                            <ScrollViewer Grid.Row="1" HorizontalScrollBarVisibility="Auto" VerticalScrollBarVisibility="Disabled">
+                                <StackPanel Orientation="Horizontal">
+                                <StackPanel Margin="0,0,10,0">
+                                    <TextBlock Text="会社名" />
+                                    <ToggleButton x:Name="ShipmentHistoryCompanyFilterToggle"
+                                                  Width="140"
+                                                  Content="{Binding ShipmentHistoryCompanyFilterDisplay}"
+                                                  IsChecked="{Binding IsShipmentHistoryCompanyFilterPopupOpen, Mode=TwoWay}" />
+                                    <Popup PlacementTarget="{Binding ElementName=ShipmentHistoryCompanyFilterToggle}"
+                                           Placement="Bottom"
+                                           StaysOpen="False"
+                                           IsOpen="{Binding IsShipmentHistoryCompanyFilterPopupOpen, Mode=TwoWay}"
+                                           DataContext="{Binding PlacementTarget.DataContext, RelativeSource={RelativeSource Self}}">
+                                        <Border BorderBrush="#999" BorderThickness="1" Background="White" Padding="6">
+                                            <StackPanel MinWidth="220">
+                                                <StackPanel Orientation="Horizontal" Margin="0,0,0,6">
+                                                    <Button Content="全選択" Width="72" Margin="0,0,6,0"
+                                                            Command="{Binding SetShipmentHistoryMultiFilterSelectionCommand}"
+                                                            CommandParameter="Company|All" />
+                                                    <Button Content="全解除" Width="72"
+                                                            Command="{Binding SetShipmentHistoryMultiFilterSelectionCommand}"
+                                                            CommandParameter="Company|None" />
+                                                </StackPanel>
+                                                <ScrollViewer Height="220" VerticalScrollBarVisibility="Auto">
+                                                    <ItemsControl ItemsSource="{Binding ShipmentHistoryCompanyMultiFilterOptions}">
+                                                        <ItemsControl.ItemTemplate>
+                                                            <DataTemplate>
+                                                                <CheckBox Content="{Binding Value}"
+                                                                          IsChecked="{Binding IsChecked, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}" />
+                                                            </DataTemplate>
+                                                        </ItemsControl.ItemTemplate>
+                                                    </ItemsControl>
+                                                </ScrollViewer>
+                                            </StackPanel>
+                                        </Border>
+                                    </Popup>
+                                </StackPanel>
+
+                                <StackPanel Margin="0,0,10,0">
+                                    <TextBlock Text="個人名" />
+                                    <ToggleButton x:Name="ShipmentHistoryPersonFilterToggle"
+                                                  Width="140"
+                                                  Content="{Binding ShipmentHistoryPersonFilterDisplay}"
+                                                  IsChecked="{Binding IsShipmentHistoryPersonFilterPopupOpen, Mode=TwoWay}" />
+                                    <Popup PlacementTarget="{Binding ElementName=ShipmentHistoryPersonFilterToggle}"
+                                           Placement="Bottom"
+                                           StaysOpen="False"
+                                           IsOpen="{Binding IsShipmentHistoryPersonFilterPopupOpen, Mode=TwoWay}"
+                                           DataContext="{Binding PlacementTarget.DataContext, RelativeSource={RelativeSource Self}}">
+                                        <Border BorderBrush="#999" BorderThickness="1" Background="White" Padding="6">
+                                            <StackPanel MinWidth="200">
+                                                <StackPanel Orientation="Horizontal" Margin="0,0,0,6">
+                                                    <Button Content="全選択" Width="72" Margin="0,0,6,0"
+                                                            Command="{Binding SetShipmentHistoryMultiFilterSelectionCommand}"
+                                                            CommandParameter="Person|All" />
+                                                    <Button Content="全解除" Width="72"
+                                                            Command="{Binding SetShipmentHistoryMultiFilterSelectionCommand}"
+                                                            CommandParameter="Person|None" />
+                                                </StackPanel>
+                                                <ScrollViewer Height="220" VerticalScrollBarVisibility="Auto">
+                                                    <ItemsControl ItemsSource="{Binding ShipmentHistoryPersonMultiFilterOptions}">
+                                                        <ItemsControl.ItemTemplate>
+                                                            <DataTemplate>
+                                                                <CheckBox Content="{Binding Value}"
+                                                                          IsChecked="{Binding IsChecked, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}" />
+                                                            </DataTemplate>
+                                                        </ItemsControl.ItemTemplate>
+                                                    </ItemsControl>
+                                                </ScrollViewer>
+                                            </StackPanel>
+                                        </Border>
+                                    </Popup>
+                                </StackPanel>
+
+                                <StackPanel Margin="0,0,10,0">
+                                    <TextBlock Text="区分" />
+                                    <ToggleButton x:Name="ShipmentHistoryCategoryFilterToggle"
+                                                  Width="140"
+                                                  Content="{Binding ShipmentHistoryCategoryFilterDisplay}"
+                                                  IsChecked="{Binding IsShipmentHistoryCategoryFilterPopupOpen, Mode=TwoWay}" />
+                                    <Popup PlacementTarget="{Binding ElementName=ShipmentHistoryCategoryFilterToggle}"
+                                           Placement="Bottom"
+                                           StaysOpen="False"
+                                           IsOpen="{Binding IsShipmentHistoryCategoryFilterPopupOpen, Mode=TwoWay}"
+                                           DataContext="{Binding PlacementTarget.DataContext, RelativeSource={RelativeSource Self}}">
+                                        <Border BorderBrush="#999" BorderThickness="1" Background="White" Padding="6">
+                                            <StackPanel MinWidth="170">
+                                                <StackPanel Orientation="Horizontal" Margin="0,0,0,6">
+                                                    <Button Content="全選択" Width="72" Margin="0,0,6,0"
+                                                            Command="{Binding SetShipmentHistoryMultiFilterSelectionCommand}"
+                                                            CommandParameter="Category|All" />
+                                                    <Button Content="全解除" Width="72"
+                                                            Command="{Binding SetShipmentHistoryMultiFilterSelectionCommand}"
+                                                            CommandParameter="Category|None" />
+                                                </StackPanel>
+                                                <ScrollViewer Height="220" VerticalScrollBarVisibility="Auto">
+                                                    <ItemsControl ItemsSource="{Binding ShipmentHistoryCategoryMultiFilterOptions}">
+                                                        <ItemsControl.ItemTemplate>
+                                                            <DataTemplate>
+                                                                <CheckBox Content="{Binding Value}"
+                                                                          IsChecked="{Binding IsChecked, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}" />
+                                                            </DataTemplate>
+                                                        </ItemsControl.ItemTemplate>
+                                                    </ItemsControl>
+                                                </ScrollViewer>
+                                            </StackPanel>
+                                        </Border>
+                                    </Popup>
+                                </StackPanel>
+
+                                <StackPanel Margin="0,0,10,0">
+                                    <TextBlock Text="Helixバージョン" />
+                                    <ToggleButton x:Name="ShipmentHistoryHelixFilterToggle"
+                                                  Width="140"
+                                                  Content="{Binding ShipmentHistoryHelixFilterDisplay}"
+                                                  IsChecked="{Binding IsShipmentHistoryHelixFilterPopupOpen, Mode=TwoWay}" />
+                                    <Popup PlacementTarget="{Binding ElementName=ShipmentHistoryHelixFilterToggle}"
+                                           Placement="Bottom"
+                                           StaysOpen="False"
+                                           IsOpen="{Binding IsShipmentHistoryHelixFilterPopupOpen, Mode=TwoWay}"
+                                           DataContext="{Binding PlacementTarget.DataContext, RelativeSource={RelativeSource Self}}">
+                                        <Border BorderBrush="#999" BorderThickness="1" Background="White" Padding="6">
+                                            <StackPanel MinWidth="220">
+                                                <StackPanel Orientation="Horizontal" Margin="0,0,0,6">
+                                                    <Button Content="全選択" Width="72" Margin="0,0,6,0"
+                                                            Command="{Binding SetShipmentHistoryMultiFilterSelectionCommand}"
+                                                            CommandParameter="Helix|All" />
+                                                    <Button Content="全解除" Width="72"
+                                                            Command="{Binding SetShipmentHistoryMultiFilterSelectionCommand}"
+                                                            CommandParameter="Helix|None" />
+                                                </StackPanel>
+                                                <ScrollViewer Height="220" VerticalScrollBarVisibility="Auto">
+                                                    <ItemsControl ItemsSource="{Binding ShipmentHistoryHelixMultiFilterOptions}">
+                                                        <ItemsControl.ItemTemplate>
+                                                            <DataTemplate>
+                                                                <CheckBox Content="{Binding Value}"
+                                                                          IsChecked="{Binding IsChecked, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}" />
+                                                            </DataTemplate>
+                                                        </ItemsControl.ItemTemplate>
+                                                    </ItemsControl>
+                                                </ScrollViewer>
+                                            </StackPanel>
+                                        </Border>
+                                    </Popup>
+                                </StackPanel>
+
+                                <StackPanel Margin="0,0,10,0">
+                                    <TextBlock Text="コード" />
+                                    <ToggleButton x:Name="ShipmentHistoryCodeFilterToggle"
+                                                  Width="140"
+                                                  Content="{Binding ShipmentHistoryCodeFilterDisplay}"
+                                                  IsChecked="{Binding IsShipmentHistoryCodeFilterPopupOpen, Mode=TwoWay}" />
+                                    <Popup PlacementTarget="{Binding ElementName=ShipmentHistoryCodeFilterToggle}"
+                                           Placement="Bottom"
+                                           StaysOpen="False"
+                                           IsOpen="{Binding IsShipmentHistoryCodeFilterPopupOpen, Mode=TwoWay}"
+                                           DataContext="{Binding PlacementTarget.DataContext, RelativeSource={RelativeSource Self}}">
+                                        <Border BorderBrush="#999" BorderThickness="1" Background="White" Padding="6">
+                                            <StackPanel MinWidth="200">
+                                                <StackPanel Orientation="Horizontal" Margin="0,0,0,6">
+                                                    <Button Content="全選択" Width="72" Margin="0,0,6,0"
+                                                            Command="{Binding SetShipmentHistoryMultiFilterSelectionCommand}"
+                                                            CommandParameter="Code|All" />
+                                                    <Button Content="全解除" Width="72"
+                                                            Command="{Binding SetShipmentHistoryMultiFilterSelectionCommand}"
+                                                            CommandParameter="Code|None" />
+                                                </StackPanel>
+                                                <ScrollViewer Height="220" VerticalScrollBarVisibility="Auto">
+                                                    <ItemsControl ItemsSource="{Binding ShipmentHistoryCodeMultiFilterOptions}">
+                                                        <ItemsControl.ItemTemplate>
+                                                            <DataTemplate>
+                                                                <CheckBox Content="{Binding Value}"
+                                                                          IsChecked="{Binding IsChecked, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}" />
+                                                            </DataTemplate>
+                                                        </ItemsControl.ItemTemplate>
+                                                    </ItemsControl>
+                                                </ScrollViewer>
+                                            </StackPanel>
+                                        </Border>
+                                    </Popup>
+                                </StackPanel>
+
+                                <StackPanel Margin="0,0,10,0">
+                                    <TextBlock Text="名称" />
+                                    <ToggleButton x:Name="ShipmentHistoryNameFilterToggle"
+                                                  Width="140"
+                                                  Content="{Binding ShipmentHistoryNameFilterDisplay}"
+                                                  IsChecked="{Binding IsShipmentHistoryNameFilterPopupOpen, Mode=TwoWay}" />
+                                    <Popup PlacementTarget="{Binding ElementName=ShipmentHistoryNameFilterToggle}"
+                                           Placement="Bottom"
+                                           StaysOpen="False"
+                                           IsOpen="{Binding IsShipmentHistoryNameFilterPopupOpen, Mode=TwoWay}"
+                                           DataContext="{Binding PlacementTarget.DataContext, RelativeSource={RelativeSource Self}}">
+                                        <Border BorderBrush="#999" BorderThickness="1" Background="White" Padding="6">
+                                            <StackPanel MinWidth="260">
+                                                <StackPanel Orientation="Horizontal" Margin="0,0,0,6">
+                                                    <Button Content="全選択" Width="72" Margin="0,0,6,0"
+                                                            Command="{Binding SetShipmentHistoryMultiFilterSelectionCommand}"
+                                                            CommandParameter="Name|All" />
+                                                    <Button Content="全解除" Width="72"
+                                                            Command="{Binding SetShipmentHistoryMultiFilterSelectionCommand}"
+                                                            CommandParameter="Name|None" />
+                                                </StackPanel>
+                                                <ScrollViewer Height="220" VerticalScrollBarVisibility="Auto">
+                                                    <ItemsControl ItemsSource="{Binding ShipmentHistoryNameMultiFilterOptions}">
+                                                        <ItemsControl.ItemTemplate>
+                                                            <DataTemplate>
+                                                                <CheckBox Content="{Binding Value}"
+                                                                          IsChecked="{Binding IsChecked, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}" />
+                                                            </DataTemplate>
+                                                        </ItemsControl.ItemTemplate>
+                                                    </ItemsControl>
+                                                </ScrollViewer>
+                                            </StackPanel>
+                                        </Border>
+                                    </Popup>
+                                </StackPanel>
+
+                                <StackPanel Margin="0,0,10,0">
+                                    <TextBlock Text="対応表版数" />
+                                    <ToggleButton x:Name="ShipmentHistoryVersionFilterToggle"
+                                                  Width="140"
+                                                  Content="{Binding ShipmentHistoryCompatibilityVersionFilterDisplay}"
+                                                  IsChecked="{Binding IsShipmentHistoryCompatibilityVersionFilterPopupOpen, Mode=TwoWay}" />
+                                    <Popup PlacementTarget="{Binding ElementName=ShipmentHistoryVersionFilterToggle}"
+                                           Placement="Bottom"
+                                           StaysOpen="False"
+                                           IsOpen="{Binding IsShipmentHistoryCompatibilityVersionFilterPopupOpen, Mode=TwoWay}"
+                                           DataContext="{Binding PlacementTarget.DataContext, RelativeSource={RelativeSource Self}}">
+                                        <Border BorderBrush="#999" BorderThickness="1" Background="White" Padding="6">
+                                            <StackPanel MinWidth="190">
+                                                <StackPanel Orientation="Horizontal" Margin="0,0,0,6">
+                                                    <Button Content="全選択" Width="72" Margin="0,0,6,0"
+                                                            Command="{Binding SetShipmentHistoryMultiFilterSelectionCommand}"
+                                                            CommandParameter="Version|All" />
+                                                    <Button Content="全解除" Width="72"
+                                                            Command="{Binding SetShipmentHistoryMultiFilterSelectionCommand}"
+                                                            CommandParameter="Version|None" />
+                                                </StackPanel>
+                                                <ScrollViewer Height="220" VerticalScrollBarVisibility="Auto">
+                                                    <ItemsControl ItemsSource="{Binding ShipmentHistoryCompatibilityVersionMultiFilterOptions}">
+                                                        <ItemsControl.ItemTemplate>
+                                                            <DataTemplate>
+                                                                <CheckBox Content="{Binding Value}"
+                                                                          IsChecked="{Binding IsChecked, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}" />
+                                                            </DataTemplate>
+                                                        </ItemsControl.ItemTemplate>
+                                                    </ItemsControl>
+                                                </ScrollViewer>
+                                            </StackPanel>
+                                        </Border>
+                                    </Popup>
+                                </StackPanel>
+
+                                <StackPanel Margin="0,0,10,0">
+                                    <TextBlock Text="選択OS" />
+                                    <ToggleButton x:Name="ShipmentHistoryOsFilterToggle"
+                                                  Width="140"
+                                                  Content="{Binding ShipmentHistorySelectedOsFilterDisplay}"
+                                                  IsChecked="{Binding IsShipmentHistorySelectedOsFilterPopupOpen, Mode=TwoWay}" />
+                                    <Popup PlacementTarget="{Binding ElementName=ShipmentHistoryOsFilterToggle}"
+                                           Placement="Bottom"
+                                           StaysOpen="False"
+                                           IsOpen="{Binding IsShipmentHistorySelectedOsFilterPopupOpen, Mode=TwoWay}"
+                                           DataContext="{Binding PlacementTarget.DataContext, RelativeSource={RelativeSource Self}}">
+                                        <Border BorderBrush="#999" BorderThickness="1" Background="White" Padding="6">
+                                            <StackPanel MinWidth="170">
+                                                <StackPanel Orientation="Horizontal" Margin="0,0,0,6">
+                                                    <Button Content="全選択" Width="72" Margin="0,0,6,0"
+                                                            Command="{Binding SetShipmentHistoryMultiFilterSelectionCommand}"
+                                                            CommandParameter="Os|All" />
+                                                    <Button Content="全解除" Width="72"
+                                                            Command="{Binding SetShipmentHistoryMultiFilterSelectionCommand}"
+                                                            CommandParameter="Os|None" />
+                                                </StackPanel>
+                                                <ScrollViewer Height="220" VerticalScrollBarVisibility="Auto">
+                                                    <ItemsControl ItemsSource="{Binding ShipmentHistorySelectedOsMultiFilterOptions}">
+                                                        <ItemsControl.ItemTemplate>
+                                                            <DataTemplate>
+                                                                <CheckBox Content="{Binding Value}"
+                                                                          IsChecked="{Binding IsChecked, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}" />
+                                                            </DataTemplate>
+                                                        </ItemsControl.ItemTemplate>
+                                                    </ItemsControl>
+                                                </ScrollViewer>
+                                            </StackPanel>
+                                        </Border>
+                                    </Popup>
+                                </StackPanel>
+
+                                <StackPanel Margin="0,0,10,0">
+                                    <TextBlock Text="インストーラ名" />
+                                    <ToggleButton x:Name="ShipmentHistoryInstallerFilterToggle"
+                                                  Width="140"
+                                                  Content="{Binding ShipmentHistoryInstallerFilterDisplay}"
+                                                  IsChecked="{Binding IsShipmentHistoryInstallerFilterPopupOpen, Mode=TwoWay}" />
+                                    <Popup PlacementTarget="{Binding ElementName=ShipmentHistoryInstallerFilterToggle}"
+                                           Placement="Bottom"
+                                           StaysOpen="False"
+                                           IsOpen="{Binding IsShipmentHistoryInstallerFilterPopupOpen, Mode=TwoWay}"
+                                           DataContext="{Binding PlacementTarget.DataContext, RelativeSource={RelativeSource Self}}">
+                                        <Border BorderBrush="#999" BorderThickness="1" Background="White" Padding="6">
+                                            <StackPanel MinWidth="280">
+                                                <StackPanel Orientation="Horizontal" Margin="0,0,0,6">
+                                                    <Button Content="全選択" Width="72" Margin="0,0,6,0"
+                                                            Command="{Binding SetShipmentHistoryMultiFilterSelectionCommand}"
+                                                            CommandParameter="Installer|All" />
+                                                    <Button Content="全解除" Width="72"
+                                                            Command="{Binding SetShipmentHistoryMultiFilterSelectionCommand}"
+                                                            CommandParameter="Installer|None" />
+                                                </StackPanel>
+                                                <ScrollViewer Height="220" VerticalScrollBarVisibility="Auto">
+                                                    <ItemsControl ItemsSource="{Binding ShipmentHistoryInstallerMultiFilterOptions}">
+                                                        <ItemsControl.ItemTemplate>
+                                                            <DataTemplate>
+                                                                <CheckBox Content="{Binding Value}"
+                                                                          IsChecked="{Binding IsChecked, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}" />
+                                                            </DataTemplate>
+                                                        </ItemsControl.ItemTemplate>
+                                                    </ItemsControl>
+                                                </ScrollViewer>
+                                            </StackPanel>
+                                        </Border>
+                                    </Popup>
+                                </StackPanel>
+                                </StackPanel>
+                            </ScrollViewer>
+                        </Grid>
+                    </GroupBox>
+
+                    <DataGrid Grid.Row="2"
+                              ItemsSource="{Binding ShipmentHistoryViewItems}"
+                              AutoGenerateColumns="False"
+                              CanUserAddRows="False"
+                              IsReadOnly="True"
+                              ColumnWidth="SizeToCells"
+                              ScrollViewer.HorizontalScrollBarVisibility="Auto"
+                              ScrollViewer.VerticalScrollBarVisibility="Auto">
+                        <DataGrid.Resources>
+                            <Style TargetType="TextBlock">
+                                <Setter Property="TextWrapping" Value="NoWrap" />
+                            </Style>
+                        </DataGrid.Resources>
+                        <DataGrid.Columns>
+                            <DataGridTextColumn Header="送付日"
+                                                Binding="{Binding ShipmentDate, StringFormat=yyyy/MM/dd}"
+                                                Width="SizeToCells" />
+                            <DataGridTextColumn Header="会社名" Binding="{Binding CompanyName}" Width="SizeToCells" />
+                            <DataGridTextColumn Header="個人名" Binding="{Binding PersonName}" Width="SizeToCells" />
+                            <DataGridTextColumn Header="区分" Binding="{Binding Category}" Width="SizeToCells" />
+                            <DataGridTextColumn Header="Helixバージョン" Binding="{Binding HelixVersion}" Width="SizeToCells" />
+                            <DataGridTextColumn Header="コード" Binding="{Binding Code}" Width="SizeToCells" />
+                            <DataGridTextColumn Header="名称" Binding="{Binding Name}" Width="SizeToCells" />
+                            <DataGridTextColumn Header="対応表版数" Binding="{Binding CompatibilityVersion}" Width="SizeToCells" />
+                            <DataGridTextColumn Header="選択OS" Binding="{Binding SelectedOs}" Width="SizeToCells" />
+                            <DataGridTextColumn Header="インストーラ名" Binding="{Binding InstallerName}" Width="SizeToCells" />
+                        </DataGrid.Columns>
+                    </DataGrid>
                 </Grid>
             </TabItem>
         </TabControl>

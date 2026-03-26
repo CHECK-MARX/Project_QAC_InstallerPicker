@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using System.Globalization;
 using System.IO;
 using System.Linq;
 using System.Text;
@@ -84,6 +85,61 @@ public sealed class ShipmentHistoryExcelService
         SortDataByShipmentDateDescending(sheet, headerRow);
         EnsureAutoFilter(sheet, headerRow);
         workbook.Save();
+    }
+
+    public IReadOnlyList<ShipmentHistoryRecord> ReadAll(string excelPath)
+    {
+        if (string.IsNullOrWhiteSpace(excelPath))
+        {
+            throw new ArgumentException("\u9001\u4ED8\u5C65\u6B74Excel\u30D1\u30B9\u304C\u672A\u8A2D\u5B9A\u3067\u3059\u3002", nameof(excelPath));
+        }
+
+        if (!File.Exists(excelPath))
+        {
+            throw new FileNotFoundException("\u9001\u4ED8\u5C65\u6B74Excel\u304C\u898B\u3064\u304B\u308A\u307E\u305B\u3093\u3002", excelPath);
+        }
+
+        if (!excelPath.EndsWith(".xlsx", StringComparison.OrdinalIgnoreCase))
+        {
+            throw new InvalidOperationException("\u9001\u4ED8\u5C65\u6B74Excel\u306F .xlsx \u30D5\u30A1\u30A4\u30EB\u3092\u6307\u5B9A\u3057\u3066\u304F\u3060\u3055\u3044\u3002");
+        }
+
+        using var stream = new FileStream(excelPath, FileMode.Open, FileAccess.Read, FileShare.ReadWrite);
+        using var workbook = new XLWorkbook(stream);
+        var sheet = workbook.Worksheets.FirstOrDefault();
+        if (sheet == null)
+        {
+            throw new InvalidOperationException("\u9001\u4ED8\u5C65\u6B74Excel\u306B\u30B7\u30FC\u30C8\u304C\u5B58\u5728\u3057\u307E\u305B\u3093\u3002");
+        }
+
+        var headerRow = FindHeaderRow(sheet);
+        ValidateHeaders(sheet, headerRow);
+
+        var lastDataRow = FindLastDataRow(sheet, headerRow);
+        var result = new List<ShipmentHistoryRecord>();
+        for (var row = headerRow + 1; row <= lastDataRow; row++)
+        {
+            if (!HasDataRow(sheet, row))
+            {
+                continue;
+            }
+
+            result.Add(new ShipmentHistoryRecord
+            {
+                ShipmentDate = ParseShipmentDate(sheet.Cell(row, 1)),
+                CompanyName = sheet.Cell(row, 2).GetString().Trim(),
+                PersonName = sheet.Cell(row, 3).GetString().Trim(),
+                Category = sheet.Cell(row, 4).GetString().Trim(),
+                HelixVersion = sheet.Cell(row, 5).GetString().Trim(),
+                Code = sheet.Cell(row, 6).GetString().Trim(),
+                Name = sheet.Cell(row, 7).GetString().Trim(),
+                CompatibilityVersion = sheet.Cell(row, 8).GetString().Trim(),
+                SelectedOs = sheet.Cell(row, 9).GetString().Trim(),
+                InstallerName = sheet.Cell(row, 10).GetString().Trim()
+            });
+        }
+
+        return result;
     }
 
     private static int FindHeaderRow(IXLWorksheet sheet)
@@ -219,6 +275,32 @@ public sealed class ShipmentHistoryExcelService
         }
 
         return lastDataRow;
+    }
+
+    private static bool HasDataRow(IXLWorksheet sheet, int row)
+    {
+        return Columns.Any(column => !string.IsNullOrWhiteSpace(sheet.Cell(row, column.ColumnIndex).GetString()));
+    }
+
+    private static DateTime ParseShipmentDate(IXLCell cell)
+    {
+        if (cell.TryGetValue<DateTime>(out var date))
+        {
+            return date.Date;
+        }
+
+        var text = cell.GetString().Trim();
+        if (DateTime.TryParse(text, CultureInfo.CurrentCulture, DateTimeStyles.AssumeLocal, out date))
+        {
+            return date.Date;
+        }
+
+        if (DateTime.TryParse(text, CultureInfo.InvariantCulture, DateTimeStyles.AssumeLocal, out date))
+        {
+            return date.Date;
+        }
+
+        return DateTime.MinValue;
     }
 
     private static string NormalizeHeader(string value)

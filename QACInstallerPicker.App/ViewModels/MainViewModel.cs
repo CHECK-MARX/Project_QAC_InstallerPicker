@@ -43,11 +43,13 @@ public partial class MainViewModel : ObservableObject
     private List<LogicalItem> _logicalItems = new();
     private readonly List<CustomZipPlan> _customZipPlans = new();
     private readonly List<ManualPickEntry> _manualPicks = new();
+    private readonly List<ShipmentHistoryRecord> _shipmentHistoryAllRecords = new();
     private readonly Dictionary<long, TransferStatus> _transferStatusLookup = new();
     private readonly HashSet<string> _redownloadUnlockedDestinationPaths = new(StringComparer.OrdinalIgnoreCase);
     private bool _suppressSelectionSync;
     private bool _isRestoringCustomState;
     private bool _isApplyingSelectionHistory;
+    private bool _isApplyingShipmentHistoryViewFilters;
     private static readonly Regex VersionRegex = new(@"\d+(?:\.\d+)+", RegexOptions.Compiled);
     private static readonly Regex VersionNumberRegex = new(@"\d+", RegexOptions.Compiled);
     private const string ScanOnlyVersionLabel = "共有スキャン";
@@ -128,10 +130,13 @@ public partial class MainViewModel : ObservableObject
         "SECCCM"
     };
     private const int TransferTabIndex = 2;
-    private const int ShipmentHistoryTabIndex = 4;
+    private const int ShipmentInputTabIndex = 4;
+    private const int ShipmentHistoryViewTabIndex = 5;
     private const string ComplianceModuleSuffix = "コンプライアンスモジュール";
     private const int SelectionHistoryLimit = 5;
     private const string AlreadyDownloadedReason = "既にダウンロード済み（ダブルクリックで再DLに含める）";
+    private const string ShipmentHistoryFilterAllOption = "（すべて）";
+    private const string ShipmentHistoryFilterNoneOption = "（なし）";
     private static readonly IReadOnlyList<string> ShipmentCategoryOptionsList =
     [
         "評価",
@@ -140,6 +145,13 @@ public partial class MainViewModel : ObservableObject
         "保守",
         "再送",
         "その他"
+    ];
+    private static readonly IReadOnlyList<string> ShipmentHistoryPeriodOptionsList =
+    [
+        "全期間",
+        "1週間",
+        "1か月",
+        "1年"
     ];
 
     public MainViewModel()
@@ -172,6 +184,25 @@ public partial class MainViewModel : ObservableObject
         CustomTabs = new ObservableCollection<CustomTabViewModel>();
         SelectionStateHistoryEntries = new ObservableCollection<SelectionStateHistoryEntry>();
         ShipmentHistoryItems = new ObservableCollection<BasketItemViewModel>();
+        ShipmentHistoryViewItems = new ObservableCollection<ShipmentHistoryRecord>();
+        ShipmentHistoryCompanyMultiFilterOptions = new ObservableCollection<FilterCheckItemViewModel>();
+        ShipmentHistoryPersonMultiFilterOptions = new ObservableCollection<FilterCheckItemViewModel>();
+        ShipmentHistoryCategoryMultiFilterOptions = new ObservableCollection<FilterCheckItemViewModel>();
+        ShipmentHistoryHelixMultiFilterOptions = new ObservableCollection<FilterCheckItemViewModel>();
+        ShipmentHistoryCodeMultiFilterOptions = new ObservableCollection<FilterCheckItemViewModel>();
+        ShipmentHistoryNameMultiFilterOptions = new ObservableCollection<FilterCheckItemViewModel>();
+        ShipmentHistoryCompatibilityVersionMultiFilterOptions = new ObservableCollection<FilterCheckItemViewModel>();
+        ShipmentHistorySelectedOsMultiFilterOptions = new ObservableCollection<FilterCheckItemViewModel>();
+        ShipmentHistoryInstallerMultiFilterOptions = new ObservableCollection<FilterCheckItemViewModel>();
+        ShipmentHistoryCompanyFilterOptions = new ObservableCollection<string> { ShipmentHistoryFilterAllOption };
+        ShipmentHistoryPersonFilterOptions = new ObservableCollection<string> { ShipmentHistoryFilterAllOption };
+        ShipmentHistoryCategoryFilterOptions = new ObservableCollection<string> { ShipmentHistoryFilterAllOption };
+        ShipmentHistoryHelixFilterOptions = new ObservableCollection<string> { ShipmentHistoryFilterAllOption };
+        ShipmentHistoryCodeFilterOptions = new ObservableCollection<string> { ShipmentHistoryFilterAllOption };
+        ShipmentHistoryNameFilterOptions = new ObservableCollection<string> { ShipmentHistoryFilterAllOption };
+        ShipmentHistoryCompatibilityVersionFilterOptions = new ObservableCollection<string> { ShipmentHistoryFilterAllOption };
+        ShipmentHistorySelectedOsFilterOptions = new ObservableCollection<string> { ShipmentHistoryFilterAllOption };
+        ShipmentHistoryInstallerFilterOptions = new ObservableCollection<string> { ShipmentHistoryFilterAllOption };
 
         RestoreCustomStateFromSettings();
         LoadSelectionStateHistoryFromSettings();
@@ -191,7 +222,36 @@ public partial class MainViewModel : ObservableObject
     public ObservableCollection<CustomTabViewModel> CustomTabs { get; }
     public ObservableCollection<SelectionStateHistoryEntry> SelectionStateHistoryEntries { get; }
     public ObservableCollection<BasketItemViewModel> ShipmentHistoryItems { get; }
+    public ObservableCollection<ShipmentHistoryRecord> ShipmentHistoryViewItems { get; }
+    public ObservableCollection<FilterCheckItemViewModel> ShipmentHistoryCompanyMultiFilterOptions { get; }
+    public ObservableCollection<FilterCheckItemViewModel> ShipmentHistoryPersonMultiFilterOptions { get; }
+    public ObservableCollection<FilterCheckItemViewModel> ShipmentHistoryCategoryMultiFilterOptions { get; }
+    public ObservableCollection<FilterCheckItemViewModel> ShipmentHistoryHelixMultiFilterOptions { get; }
+    public ObservableCollection<FilterCheckItemViewModel> ShipmentHistoryCodeMultiFilterOptions { get; }
+    public ObservableCollection<FilterCheckItemViewModel> ShipmentHistoryNameMultiFilterOptions { get; }
+    public ObservableCollection<FilterCheckItemViewModel> ShipmentHistoryCompatibilityVersionMultiFilterOptions { get; }
+    public ObservableCollection<FilterCheckItemViewModel> ShipmentHistorySelectedOsMultiFilterOptions { get; }
+    public ObservableCollection<FilterCheckItemViewModel> ShipmentHistoryInstallerMultiFilterOptions { get; }
+    public ObservableCollection<string> ShipmentHistoryCompanyFilterOptions { get; }
+    public ObservableCollection<string> ShipmentHistoryPersonFilterOptions { get; }
+    public ObservableCollection<string> ShipmentHistoryCategoryFilterOptions { get; }
+    public ObservableCollection<string> ShipmentHistoryHelixFilterOptions { get; }
+    public ObservableCollection<string> ShipmentHistoryCodeFilterOptions { get; }
+    public ObservableCollection<string> ShipmentHistoryNameFilterOptions { get; }
+    public ObservableCollection<string> ShipmentHistoryCompatibilityVersionFilterOptions { get; }
+    public ObservableCollection<string> ShipmentHistorySelectedOsFilterOptions { get; }
+    public ObservableCollection<string> ShipmentHistoryInstallerFilterOptions { get; }
     public IReadOnlyList<string> ShipmentCategoryOptions => ShipmentCategoryOptionsList;
+    public IReadOnlyList<string> ShipmentHistoryPeriodOptions => ShipmentHistoryPeriodOptionsList;
+    public string ShipmentHistoryCompanyFilterDisplay => BuildShipmentHistoryMultiFilterDisplay(ShipmentHistoryCompanyMultiFilterOptions);
+    public string ShipmentHistoryPersonFilterDisplay => BuildShipmentHistoryMultiFilterDisplay(ShipmentHistoryPersonMultiFilterOptions);
+    public string ShipmentHistoryCategoryFilterDisplay => BuildShipmentHistoryMultiFilterDisplay(ShipmentHistoryCategoryMultiFilterOptions);
+    public string ShipmentHistoryHelixFilterDisplay => BuildShipmentHistoryMultiFilterDisplay(ShipmentHistoryHelixMultiFilterOptions);
+    public string ShipmentHistoryCodeFilterDisplay => BuildShipmentHistoryMultiFilterDisplay(ShipmentHistoryCodeMultiFilterOptions);
+    public string ShipmentHistoryNameFilterDisplay => BuildShipmentHistoryMultiFilterDisplay(ShipmentHistoryNameMultiFilterOptions);
+    public string ShipmentHistoryCompatibilityVersionFilterDisplay => BuildShipmentHistoryMultiFilterDisplay(ShipmentHistoryCompatibilityVersionMultiFilterOptions);
+    public string ShipmentHistorySelectedOsFilterDisplay => BuildShipmentHistoryMultiFilterDisplay(ShipmentHistorySelectedOsMultiFilterOptions);
+    public string ShipmentHistoryInstallerFilterDisplay => BuildShipmentHistoryMultiFilterDisplay(ShipmentHistoryInstallerMultiFilterOptions);
 
     public void SetCustomZipPlans(IEnumerable<CustomZipPlan> plans)
     {
@@ -337,6 +397,72 @@ public partial class MainViewModel : ObservableObject
 
     [ObservableProperty]
     private string _shipmentCategory = string.Empty;
+
+    [ObservableProperty]
+    private string _shipmentHistoryViewSummary = "未読込";
+
+    [ObservableProperty]
+    private string _shipmentHistoryPeriod = "全期間";
+
+    [ObservableProperty]
+    private DateTime? _shipmentHistoryFromDate;
+
+    [ObservableProperty]
+    private DateTime? _shipmentHistoryToDate;
+
+    [ObservableProperty]
+    private string _shipmentHistoryCompanyFilter = ShipmentHistoryFilterAllOption;
+
+    [ObservableProperty]
+    private string _shipmentHistoryPersonFilter = ShipmentHistoryFilterAllOption;
+
+    [ObservableProperty]
+    private string _shipmentHistoryCategoryFilter = ShipmentHistoryFilterAllOption;
+
+    [ObservableProperty]
+    private string _shipmentHistoryHelixFilter = ShipmentHistoryFilterAllOption;
+
+    [ObservableProperty]
+    private string _shipmentHistoryCodeFilter = ShipmentHistoryFilterAllOption;
+
+    [ObservableProperty]
+    private string _shipmentHistoryNameFilter = ShipmentHistoryFilterAllOption;
+
+    [ObservableProperty]
+    private string _shipmentHistoryCompatibilityVersionFilter = ShipmentHistoryFilterAllOption;
+
+    [ObservableProperty]
+    private string _shipmentHistorySelectedOsFilter = ShipmentHistoryFilterAllOption;
+
+    [ObservableProperty]
+    private string _shipmentHistoryInstallerFilter = ShipmentHistoryFilterAllOption;
+
+    [ObservableProperty]
+    private bool _isShipmentHistoryCompanyFilterPopupOpen;
+
+    [ObservableProperty]
+    private bool _isShipmentHistoryPersonFilterPopupOpen;
+
+    [ObservableProperty]
+    private bool _isShipmentHistoryCategoryFilterPopupOpen;
+
+    [ObservableProperty]
+    private bool _isShipmentHistoryHelixFilterPopupOpen;
+
+    [ObservableProperty]
+    private bool _isShipmentHistoryCodeFilterPopupOpen;
+
+    [ObservableProperty]
+    private bool _isShipmentHistoryNameFilterPopupOpen;
+
+    [ObservableProperty]
+    private bool _isShipmentHistoryCompatibilityVersionFilterPopupOpen;
+
+    [ObservableProperty]
+    private bool _isShipmentHistorySelectedOsFilterPopupOpen;
+
+    [ObservableProperty]
+    private bool _isShipmentHistoryInstallerFilterPopupOpen;
 
     private bool _suppressUploadListEdit;
     private bool _uploadListUserEdited;
@@ -1530,6 +1656,474 @@ public partial class MainViewModel : ObservableObject
     }
 
     [RelayCommand]
+    private void RefreshShipmentHistoryView()
+    {
+        RefreshShipmentHistoryViewInternal(showValidationError: true);
+    }
+
+    [RelayCommand]
+    private void ClearShipmentHistoryViewFilters()
+    {
+        _isApplyingShipmentHistoryViewFilters = true;
+        try
+        {
+            ShipmentHistoryPeriod = ShipmentHistoryPeriodOptionsList[0];
+            ShipmentHistoryFromDate = null;
+            ShipmentHistoryToDate = null;
+            ShipmentHistoryCompanyFilter = ShipmentHistoryFilterAllOption;
+            ShipmentHistoryPersonFilter = ShipmentHistoryFilterAllOption;
+            ShipmentHistoryCategoryFilter = ShipmentHistoryFilterAllOption;
+            ShipmentHistoryHelixFilter = ShipmentHistoryFilterAllOption;
+            ShipmentHistoryCodeFilter = ShipmentHistoryFilterAllOption;
+            ShipmentHistoryNameFilter = ShipmentHistoryFilterAllOption;
+            ShipmentHistoryCompatibilityVersionFilter = ShipmentHistoryFilterAllOption;
+            ShipmentHistorySelectedOsFilter = ShipmentHistoryFilterAllOption;
+            ShipmentHistoryInstallerFilter = ShipmentHistoryFilterAllOption;
+            SetShipmentHistoryMultiFilterSelection(ShipmentHistoryCompanyMultiFilterOptions, true, applyImmediately: false);
+            SetShipmentHistoryMultiFilterSelection(ShipmentHistoryPersonMultiFilterOptions, true, applyImmediately: false);
+            SetShipmentHistoryMultiFilterSelection(ShipmentHistoryCategoryMultiFilterOptions, true, applyImmediately: false);
+            SetShipmentHistoryMultiFilterSelection(ShipmentHistoryHelixMultiFilterOptions, true, applyImmediately: false);
+            SetShipmentHistoryMultiFilterSelection(ShipmentHistoryCodeMultiFilterOptions, true, applyImmediately: false);
+            SetShipmentHistoryMultiFilterSelection(ShipmentHistoryNameMultiFilterOptions, true, applyImmediately: false);
+            SetShipmentHistoryMultiFilterSelection(ShipmentHistoryCompatibilityVersionMultiFilterOptions, true, applyImmediately: false);
+            SetShipmentHistoryMultiFilterSelection(ShipmentHistorySelectedOsMultiFilterOptions, true, applyImmediately: false);
+            SetShipmentHistoryMultiFilterSelection(ShipmentHistoryInstallerMultiFilterOptions, true, applyImmediately: false);
+        }
+        finally
+        {
+            _isApplyingShipmentHistoryViewFilters = false;
+        }
+
+        RefreshShipmentHistoryMultiFilterDisplayProperties();
+        ApplyShipmentHistoryViewFilters();
+    }
+
+    [RelayCommand]
+    private void SetShipmentHistoryMultiFilterSelection(string? parameter)
+    {
+        if (string.IsNullOrWhiteSpace(parameter))
+        {
+            return;
+        }
+
+        var parts = parameter.Split('|', StringSplitOptions.TrimEntries | StringSplitOptions.RemoveEmptyEntries);
+        if (parts.Length != 2)
+        {
+            return;
+        }
+
+        var shouldSelect = string.Equals(parts[1], "All", StringComparison.OrdinalIgnoreCase);
+        var options = ResolveShipmentHistoryMultiFilterOptions(parts[0]);
+        if (options == null)
+        {
+            return;
+        }
+
+        SetShipmentHistoryMultiFilterSelection(options, shouldSelect, applyImmediately: true);
+    }
+
+    private void RefreshShipmentHistoryViewInternal(bool showValidationError)
+    {
+        var excelPath = (Settings.ShipmentHistoryExcelPath ?? string.Empty).Trim();
+        if (string.IsNullOrWhiteSpace(excelPath))
+        {
+            _shipmentHistoryAllRecords.Clear();
+            ShipmentHistoryViewItems.Clear();
+            ShipmentHistoryViewSummary = "送付履歴Excelが未設定です。";
+            if (showValidationError)
+            {
+                WpfMessageBox.Show("設定画面で『送付履歴Excel』を設定してください。", "設定不足", MessageBoxButton.OK, MessageBoxImage.Warning);
+            }
+
+            return;
+        }
+
+        if (!excelPath.EndsWith(".xlsx", StringComparison.OrdinalIgnoreCase))
+        {
+            _shipmentHistoryAllRecords.Clear();
+            ShipmentHistoryViewItems.Clear();
+            ShipmentHistoryViewSummary = "送付履歴Excelが .xlsx ではありません。";
+            if (showValidationError)
+            {
+                WpfMessageBox.Show("送付履歴Excelは .xlsx ファイルを指定してください。", "設定不足", MessageBoxButton.OK, MessageBoxImage.Warning);
+            }
+
+            return;
+        }
+
+        if (!File.Exists(excelPath))
+        {
+            _shipmentHistoryAllRecords.Clear();
+            ShipmentHistoryViewItems.Clear();
+            ShipmentHistoryViewSummary = "送付履歴Excelが見つかりません。";
+            if (showValidationError)
+            {
+                WpfMessageBox.Show($"送付履歴Excelが見つかりません: {excelPath}", "設定不足", MessageBoxButton.OK, MessageBoxImage.Warning);
+            }
+
+            return;
+        }
+
+        try
+        {
+            var rows = _shipmentHistoryExcelService.ReadAll(excelPath)
+                .OrderByDescending(row => row.ShipmentDate)
+                .ToList();
+
+            _shipmentHistoryAllRecords.Clear();
+            _shipmentHistoryAllRecords.AddRange(rows);
+
+            RebuildShipmentHistoryViewFilterOptions();
+            ApplyShipmentHistoryViewFilters();
+        }
+        catch (Exception ex)
+        {
+            _shipmentHistoryAllRecords.Clear();
+            ShipmentHistoryViewItems.Clear();
+            ShipmentHistoryViewSummary = "送付履歴の読込に失敗しました。";
+            if (showValidationError)
+            {
+                WpfMessageBox.Show(
+                    $"送付履歴Excelの読込に失敗しました。\n{ex.Message}",
+                    "読込エラー",
+                    MessageBoxButton.OK,
+                    MessageBoxImage.Error);
+            }
+        }
+    }
+
+    private void RebuildShipmentHistoryViewFilterOptions()
+    {
+        _isApplyingShipmentHistoryViewFilters = true;
+        try
+        {
+            UpdateShipmentHistoryMultiFilterOptions(
+                ShipmentHistoryCompanyMultiFilterOptions,
+                _shipmentHistoryAllRecords.Select(row => row.CompanyName));
+
+            UpdateShipmentHistoryMultiFilterOptions(
+                ShipmentHistoryPersonMultiFilterOptions,
+                _shipmentHistoryAllRecords.Select(row => row.PersonName));
+
+            UpdateShipmentHistoryMultiFilterOptions(
+                ShipmentHistoryCategoryMultiFilterOptions,
+                _shipmentHistoryAllRecords.Select(row => row.Category));
+
+            UpdateShipmentHistoryMultiFilterOptions(
+                ShipmentHistoryHelixMultiFilterOptions,
+                _shipmentHistoryAllRecords.Select(row => row.HelixVersion));
+
+            UpdateShipmentHistoryMultiFilterOptions(
+                ShipmentHistoryCodeMultiFilterOptions,
+                _shipmentHistoryAllRecords.Select(row => row.Code));
+
+            UpdateShipmentHistoryMultiFilterOptions(
+                ShipmentHistoryNameMultiFilterOptions,
+                _shipmentHistoryAllRecords.Select(row => row.Name));
+
+            UpdateShipmentHistoryMultiFilterOptions(
+                ShipmentHistoryCompatibilityVersionMultiFilterOptions,
+                _shipmentHistoryAllRecords.Select(row => row.CompatibilityVersion));
+
+            UpdateShipmentHistoryMultiFilterOptions(
+                ShipmentHistorySelectedOsMultiFilterOptions,
+                _shipmentHistoryAllRecords.Select(row => row.SelectedOs));
+
+            UpdateShipmentHistoryMultiFilterOptions(
+                ShipmentHistoryInstallerMultiFilterOptions,
+                _shipmentHistoryAllRecords.Select(row => row.InstallerName));
+        }
+        finally
+        {
+            _isApplyingShipmentHistoryViewFilters = false;
+        }
+
+        RefreshShipmentHistoryMultiFilterDisplayProperties();
+    }
+
+    private void UpdateShipmentHistoryMultiFilterOptions(
+        ObservableCollection<FilterCheckItemViewModel> target,
+        IEnumerable<string> values)
+    {
+        var previousStates = target.ToDictionary(
+            item => item.Value,
+            item => item.IsChecked,
+            StringComparer.OrdinalIgnoreCase);
+
+        var hadItems = target.Count > 0;
+        var hadAllSelected = hadItems && target.All(item => item.IsChecked);
+
+        foreach (var existing in target)
+        {
+            existing.PropertyChanged -= OnShipmentHistoryMultiFilterOptionPropertyChanged;
+        }
+
+        target.Clear();
+
+        var distinctValues = values
+            .Select(value => value?.Trim() ?? string.Empty)
+            .Where(value => !string.IsNullOrWhiteSpace(value))
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .OrderBy(value => value, StringComparer.CurrentCultureIgnoreCase)
+            .ToList();
+
+        foreach (var value in distinctValues)
+        {
+            var isChecked = !hadItems
+                || hadAllSelected
+                || (previousStates.TryGetValue(value, out var previousChecked) && previousChecked);
+
+            var option = new FilterCheckItemViewModel(value, isChecked);
+            option.PropertyChanged += OnShipmentHistoryMultiFilterOptionPropertyChanged;
+            target.Add(option);
+        }
+    }
+
+    private void UpdateShipmentHistoryFilterOptions(
+        ObservableCollection<string> target,
+        IEnumerable<string> values,
+        Action<string> setSelected,
+        string currentSelection)
+    {
+        var distinctValues = values
+            .Select(value => value?.Trim() ?? string.Empty)
+            .Where(value => !string.IsNullOrWhiteSpace(value))
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .OrderBy(value => value, StringComparer.CurrentCultureIgnoreCase)
+            .ToList();
+
+        target.Clear();
+        target.Add(ShipmentHistoryFilterAllOption);
+        foreach (var value in distinctValues)
+        {
+            target.Add(value);
+        }
+
+        var resolvedSelection = distinctValues.FirstOrDefault(value =>
+            string.Equals(value, currentSelection, StringComparison.OrdinalIgnoreCase));
+        setSelected(resolvedSelection ?? ShipmentHistoryFilterAllOption);
+    }
+
+    private void OnShipmentHistoryMultiFilterOptionPropertyChanged(object? sender, PropertyChangedEventArgs e)
+    {
+        if (!string.Equals(e.PropertyName, nameof(FilterCheckItemViewModel.IsChecked), StringComparison.Ordinal))
+        {
+            return;
+        }
+
+        if (_isApplyingShipmentHistoryViewFilters)
+        {
+            return;
+        }
+
+        RefreshShipmentHistoryMultiFilterDisplayProperties();
+        ApplyShipmentHistoryViewFilters();
+    }
+
+    private void RefreshShipmentHistoryMultiFilterDisplayProperties()
+    {
+        OnPropertyChanged(nameof(ShipmentHistoryCompanyFilterDisplay));
+        OnPropertyChanged(nameof(ShipmentHistoryPersonFilterDisplay));
+        OnPropertyChanged(nameof(ShipmentHistoryCategoryFilterDisplay));
+        OnPropertyChanged(nameof(ShipmentHistoryHelixFilterDisplay));
+        OnPropertyChanged(nameof(ShipmentHistoryCodeFilterDisplay));
+        OnPropertyChanged(nameof(ShipmentHistoryNameFilterDisplay));
+        OnPropertyChanged(nameof(ShipmentHistoryCompatibilityVersionFilterDisplay));
+        OnPropertyChanged(nameof(ShipmentHistorySelectedOsFilterDisplay));
+        OnPropertyChanged(nameof(ShipmentHistoryInstallerFilterDisplay));
+    }
+
+    private static string BuildShipmentHistoryMultiFilterDisplay(IReadOnlyCollection<FilterCheckItemViewModel> options)
+    {
+        if (options.Count == 0)
+        {
+            return ShipmentHistoryFilterAllOption;
+        }
+
+        var selected = options.Where(item => item.IsChecked).Select(item => item.Value).ToList();
+        if (selected.Count == 0)
+        {
+            return ShipmentHistoryFilterNoneOption;
+        }
+
+        if (selected.Count == options.Count)
+        {
+            return ShipmentHistoryFilterAllOption;
+        }
+
+        if (selected.Count == 1)
+        {
+            return selected[0];
+        }
+
+        return $"{selected.Count}件選択";
+    }
+
+    private ObservableCollection<FilterCheckItemViewModel>? ResolveShipmentHistoryMultiFilterOptions(string key)
+    {
+        return key.ToLowerInvariant() switch
+        {
+            "company" => ShipmentHistoryCompanyMultiFilterOptions,
+            "person" => ShipmentHistoryPersonMultiFilterOptions,
+            "category" => ShipmentHistoryCategoryMultiFilterOptions,
+            "helix" => ShipmentHistoryHelixMultiFilterOptions,
+            "code" => ShipmentHistoryCodeMultiFilterOptions,
+            "name" => ShipmentHistoryNameMultiFilterOptions,
+            "version" => ShipmentHistoryCompatibilityVersionMultiFilterOptions,
+            "os" => ShipmentHistorySelectedOsMultiFilterOptions,
+            "installer" => ShipmentHistoryInstallerMultiFilterOptions,
+            _ => null
+        };
+    }
+
+    private void SetShipmentHistoryMultiFilterSelection(
+        ObservableCollection<FilterCheckItemViewModel> options,
+        bool isChecked,
+        bool applyImmediately)
+    {
+        _isApplyingShipmentHistoryViewFilters = true;
+        try
+        {
+            foreach (var option in options)
+            {
+                option.IsChecked = isChecked;
+            }
+        }
+        finally
+        {
+            _isApplyingShipmentHistoryViewFilters = false;
+        }
+
+        RefreshShipmentHistoryMultiFilterDisplayProperties();
+        if (applyImmediately)
+        {
+            ApplyShipmentHistoryViewFilters();
+        }
+    }
+
+    private void ApplyShipmentHistoryViewFilters()
+    {
+        if (_isApplyingShipmentHistoryViewFilters)
+        {
+            return;
+        }
+
+        IEnumerable<ShipmentHistoryRecord> filtered = _shipmentHistoryAllRecords;
+
+        var (periodFrom, periodTo) = GetShipmentHistoryPeriodRange(ShipmentHistoryPeriod);
+        DateTime? effectiveFrom = periodFrom;
+        DateTime? effectiveTo = periodTo;
+
+        if (ShipmentHistoryFromDate.HasValue)
+        {
+            var from = ShipmentHistoryFromDate.Value.Date;
+            effectiveFrom = effectiveFrom.HasValue
+                ? (from > effectiveFrom.Value ? from : effectiveFrom.Value)
+                : from;
+        }
+
+        if (ShipmentHistoryToDate.HasValue)
+        {
+            var to = ShipmentHistoryToDate.Value.Date;
+            effectiveTo = effectiveTo.HasValue
+                ? (to < effectiveTo.Value ? to : effectiveTo.Value)
+                : to;
+        }
+
+        if (effectiveFrom.HasValue)
+        {
+            filtered = filtered.Where(row => row.ShipmentDate != DateTime.MinValue && row.ShipmentDate.Date >= effectiveFrom.Value);
+        }
+
+        if (effectiveTo.HasValue)
+        {
+            filtered = filtered.Where(row => row.ShipmentDate != DateTime.MinValue && row.ShipmentDate.Date <= effectiveTo.Value);
+        }
+
+        filtered = ApplyShipmentHistoryMultiFilter(filtered, ShipmentHistoryCompanyMultiFilterOptions, row => row.CompanyName);
+        filtered = ApplyShipmentHistoryMultiFilter(filtered, ShipmentHistoryPersonMultiFilterOptions, row => row.PersonName);
+        filtered = ApplyShipmentHistoryMultiFilter(filtered, ShipmentHistoryCategoryMultiFilterOptions, row => row.Category);
+        filtered = ApplyShipmentHistoryMultiFilter(filtered, ShipmentHistoryHelixMultiFilterOptions, row => row.HelixVersion);
+        filtered = ApplyShipmentHistoryMultiFilter(filtered, ShipmentHistoryCodeMultiFilterOptions, row => row.Code);
+        filtered = ApplyShipmentHistoryMultiFilter(filtered, ShipmentHistoryNameMultiFilterOptions, row => row.Name);
+        filtered = ApplyShipmentHistoryMultiFilter(filtered, ShipmentHistoryCompatibilityVersionMultiFilterOptions, row => row.CompatibilityVersion);
+        filtered = ApplyShipmentHistoryMultiFilter(filtered, ShipmentHistorySelectedOsMultiFilterOptions, row => row.SelectedOs);
+        filtered = ApplyShipmentHistoryMultiFilter(filtered, ShipmentHistoryInstallerMultiFilterOptions, row => row.InstallerName);
+
+        var filteredList = filtered
+            .OrderByDescending(row => row.ShipmentDate)
+            .ThenBy(row => row.CompanyName, StringComparer.CurrentCultureIgnoreCase)
+            .ThenBy(row => row.Code, StringComparer.CurrentCultureIgnoreCase)
+            .ToList();
+
+        ShipmentHistoryViewItems.Clear();
+        foreach (var row in filteredList)
+        {
+            ShipmentHistoryViewItems.Add(row);
+        }
+
+        ShipmentHistoryViewSummary = $"表示: {filteredList.Count} / 全{_shipmentHistoryAllRecords.Count}";
+    }
+
+    private static IEnumerable<ShipmentHistoryRecord> ApplyShipmentHistoryFilter(
+        IEnumerable<ShipmentHistoryRecord> source,
+        string filterValue,
+        Func<ShipmentHistoryRecord, string> selector)
+    {
+        if (string.IsNullOrWhiteSpace(filterValue)
+            || string.Equals(filterValue, ShipmentHistoryFilterAllOption, StringComparison.Ordinal))
+        {
+            return source;
+        }
+
+        return source.Where(row =>
+            string.Equals(
+                (selector(row) ?? string.Empty).Trim(),
+                filterValue,
+                StringComparison.OrdinalIgnoreCase));
+    }
+
+    private static IEnumerable<ShipmentHistoryRecord> ApplyShipmentHistoryMultiFilter(
+        IEnumerable<ShipmentHistoryRecord> source,
+        IReadOnlyCollection<FilterCheckItemViewModel> options,
+        Func<ShipmentHistoryRecord, string> selector)
+    {
+        if (options.Count == 0)
+        {
+            return source;
+        }
+
+        var selected = options
+            .Where(option => option.IsChecked)
+            .Select(option => option.Value)
+            .ToHashSet(StringComparer.OrdinalIgnoreCase);
+
+        if (selected.Count == options.Count)
+        {
+            return source;
+        }
+
+        if (selected.Count == 0)
+        {
+            return Array.Empty<ShipmentHistoryRecord>();
+        }
+
+        return source.Where(row => selected.Contains((selector(row) ?? string.Empty).Trim()));
+    }
+
+    private static (DateTime? From, DateTime? To) GetShipmentHistoryPeriodRange(string period)
+    {
+        var today = DateTime.Today;
+        return period switch
+        {
+            "1週間" => (today.AddDays(-6), today),
+            "1か月" => (today.AddMonths(-1), today),
+            "1年" => (today.AddYears(-1), today),
+            _ => (null, null)
+        };
+    }
+
+    [RelayCommand]
     private void WriteShipmentHistory()
     {
         if (!TryBuildShipmentHistoryRecords(out var records, out var errorMessage))
@@ -1544,6 +2138,7 @@ public partial class MainViewModel : ObservableObject
             WpfMessageBox.Show($"送付履歴に {records.Count} 件記録しました。", "完了", MessageBoxButton.OK, MessageBoxImage.Information);
             ShipmentPersonName = string.Empty;
             RefreshShipmentHistoryItems(keepCurrentSelection: true);
+            RefreshShipmentHistoryViewInternal(showValidationError: false);
         }
         catch (IOException ex)
         {
@@ -6003,9 +6598,15 @@ public partial class MainViewModel : ObservableObject
 
     partial void OnSelectedMainTabIndexChanged(int value)
     {
-        if (value == ShipmentHistoryTabIndex)
+        if (value == ShipmentInputTabIndex)
         {
             RefreshShipmentHistoryItems(keepCurrentSelection: true, resetShipmentDate: true);
+            return;
+        }
+
+        if (value == ShipmentHistoryViewTabIndex)
+        {
+            RefreshShipmentHistoryViewInternal(showValidationError: false);
         }
     }
 
@@ -6065,6 +6666,66 @@ public partial class MainViewModel : ObservableObject
         }
 
         _uploadListUserEdited = true;
+    }
+
+    partial void OnShipmentHistoryPeriodChanged(string value)
+    {
+        ApplyShipmentHistoryViewFilters();
+    }
+
+    partial void OnShipmentHistoryFromDateChanged(DateTime? value)
+    {
+        ApplyShipmentHistoryViewFilters();
+    }
+
+    partial void OnShipmentHistoryToDateChanged(DateTime? value)
+    {
+        ApplyShipmentHistoryViewFilters();
+    }
+
+    partial void OnShipmentHistoryCompanyFilterChanged(string value)
+    {
+        ApplyShipmentHistoryViewFilters();
+    }
+
+    partial void OnShipmentHistoryPersonFilterChanged(string value)
+    {
+        ApplyShipmentHistoryViewFilters();
+    }
+
+    partial void OnShipmentHistoryCategoryFilterChanged(string value)
+    {
+        ApplyShipmentHistoryViewFilters();
+    }
+
+    partial void OnShipmentHistoryHelixFilterChanged(string value)
+    {
+        ApplyShipmentHistoryViewFilters();
+    }
+
+    partial void OnShipmentHistoryCodeFilterChanged(string value)
+    {
+        ApplyShipmentHistoryViewFilters();
+    }
+
+    partial void OnShipmentHistoryNameFilterChanged(string value)
+    {
+        ApplyShipmentHistoryViewFilters();
+    }
+
+    partial void OnShipmentHistoryCompatibilityVersionFilterChanged(string value)
+    {
+        ApplyShipmentHistoryViewFilters();
+    }
+
+    partial void OnShipmentHistorySelectedOsFilterChanged(string value)
+    {
+        ApplyShipmentHistoryViewFilters();
+    }
+
+    partial void OnShipmentHistoryInstallerFilterChanged(string value)
+    {
+        ApplyShipmentHistoryViewFilters();
     }
 
     partial void OnSelectedCustomTabChanged(CustomTabViewModel? value)
