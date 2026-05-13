@@ -90,6 +90,19 @@ dotnet publish .\QACInstallerPicker.App\QACInstallerPicker.App.csproj -c Release
 QACInstallerPicker.App\bin\Release\net8.0-windows\win-x64\publish\QACInstallerPicker.App.exe
 ```
 
+### SBOM 生成 (CycloneDX JSON)
+
+```powershell
+dotnet tool install --tool-path .\.tools CycloneDX
+.\.tools\dotnet-CycloneDX .\QACInstallerPicker.App\QACInstallerPicker.App.csproj --output .\artifacts\sbom --output-format Json --filename bom.cdx.json
+```
+
+出力例:
+
+```text
+artifacts\sbom\bom.cdx.json
+```
+
 ## 初回設定
 
 `設定` 画面で以下を入力します。
@@ -151,6 +164,7 @@ QACInstallerPicker.App\bin\Release\net8.0-windows\win-x64\publish\QACInstallerPi
 - Workflow: `.github/workflows/ci.yml`
 - `push / pull_request / manual` で実行
 - Windows ビルド + publish + artifact 出力
+- CycloneDX SBOM (`artifacts/sbom/bom.cdx.json`) も artifact に含めて出力
 - 署名用シークレット設定時は Authenticode 署名を実施
 
 ## 注意事項

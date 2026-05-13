@@ -37,6 +37,15 @@ jobs:
       - name: Publish
         run: dotnet publish QACInstallerPicker.App/QACInstallerPicker.App.csproj -c Release -r win-x64 --self-contained false -o artifacts/publish --no-restore
 
+      - name: Install CycloneDX tool
+        run: dotnet tool install --tool-path ./.tools CycloneDX
+
+      - name: Generate CycloneDX SBOM
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Path artifacts/sbom -Force | Out-Null
+          ./.tools/dotnet-CycloneDX "QACInstallerPicker.App/QACInstallerPicker.App.csproj" --output "artifacts/sbom" --output-format Json --filename "bom.cdx.json"
+
       - name: Authenticode sign published executables
         if: ${{ env.SIGN_CERT_BASE64 != '' && env.SIGN_CERT_PASSWORD != '' }}
         shell: pwsh
@@ -107,5 +116,6 @@ jobs:
           path: |
             artifacts/QACInstallerPicker-win-x64.zip
             artifacts/publish/**
+            artifacts/sbom/**
           if-no-files-found: error
           retention-days: 7
