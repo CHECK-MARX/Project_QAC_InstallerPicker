@@ -1,7 +1,9 @@
 using System;
+using System.Collections.Concurrent;
 using System.Collections.Generic;
 using System.Linq;
 using System.Net.Http;
+using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
 using System.Threading;
@@ -12,6 +14,22 @@ namespace QACInstallerPicker.App.Services;
 
 public sealed class LocalLlmDecisionService
 {
+    private static readonly HttpClient SharedHttpClient = new()
+    {
+        Timeout = Timeout.InfiniteTimeSpan
+    };
+
+    private static readonly TimeSpan LlmRequestTimeout = TimeSpan.FromSeconds(12);
+    private static readonly TimeSpan ModelNameCacheTtl = TimeSpan.FromMinutes(30);
+    private static readonly TimeSpan SuccessDecisionCacheTtl = TimeSpan.FromMinutes(20);
+    private static readonly TimeSpan FailureDecisionCacheTtl = TimeSpan.FromMinutes(1);
+
+    private static readonly ConcurrentDictionary<string, ModelCacheEntry> ModelNameCache =
+        new(StringComparer.OrdinalIgnoreCase);
+
+    private readonly ConcurrentDictionary<string, DecisionCacheEntry> _decisionCache =
+        new(StringComparer.Ordinal);
+
     public async Task<LocalLlmDecisionResult> AnalyzeMemoAsync(
         string endpoint,
         string memo,
@@ -26,24 +44,31 @@ public sealed class LocalLlmDecisionService
             return result;
         }
 
-        if (string.IsNullOrWhiteSpace(memo))
+        var normalizedMemo = (memo ?? string.Empty).Trim();
+        if (normalizedMemo.Length == 0)
         {
             result.ErrorMessage = "メール/メモが空のため、LLM判定を実行できません。";
             return result;
         }
 
+        var cacheKey = BuildDecisionCacheKey(normalizedEndpoint, normalizedMemo, knownCodes);
+        if (TryGetCachedDecision(cacheKey, out var cached))
+        {
+            return cached;
+        }
+
         try
         {
-            using var client = new HttpClient
-            {
-                Timeout = TimeSpan.FromSeconds(25)
-            };
+            using var timeoutCts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+            timeoutCts.CancelAfter(LlmRequestTimeout);
+            var requestToken = timeoutCts.Token;
 
-            var modelName = await ResolveModelNameAsync(client, normalizedEndpoint, cancellationToken);
+            var modelName = await ResolveModelNameAsync(SharedHttpClient, normalizedEndpoint, requestToken);
             if (string.IsNullOrWhiteSpace(modelName))
             {
                 result.ErrorMessage = "利用可能なローカルLLMモデルが見つかりません。";
-                return result;
+                CacheDecision(cacheKey, result);
+                return CloneDecision(result);
             }
 
             result.ModelName = modelName;
@@ -52,7 +77,7 @@ public sealed class LocalLlmDecisionService
                 model = modelName,
                 stream = false,
                 format = "json",
-                options = new { temperature = 0, num_predict = 220 },
+                options = new { temperature = 0, num_predict = 320 },
                 messages = new[]
                 {
                     new
@@ -63,50 +88,56 @@ public sealed class LocalLlmDecisionService
                     new
                     {
                         role = "user",
-                        content = BuildUserPrompt(memo, knownCodes)
+                        content = BuildUserPrompt(normalizedMemo, knownCodes)
                     }
                 }
             };
 
             var payload = JsonSerializer.Serialize(requestBody);
-            using var response = await client.PostAsync(
+            using var response = await SharedHttpClient.PostAsync(
                 $"{normalizedEndpoint}/api/chat",
                 new StringContent(payload, Encoding.UTF8, "application/json"),
-                cancellationToken);
-            var responseText = await response.Content.ReadAsStringAsync(cancellationToken);
+                requestToken);
+            var responseText = await response.Content.ReadAsStringAsync(requestToken);
             result.RawResponse = responseText;
             if (!response.IsSuccessStatusCode)
             {
                 result.ErrorMessage = $"ローカルLLM応答エラー: {(int)response.StatusCode} {response.ReasonPhrase}";
-                return result;
+                CacheDecision(cacheKey, result);
+                return CloneDecision(result);
             }
 
             var messageContent = ExtractAssistantContent(responseText);
             if (string.IsNullOrWhiteSpace(messageContent))
             {
                 result.ErrorMessage = "ローカルLLMの応答本文が空です。";
-                return result;
+                CacheDecision(cacheKey, result);
+                return CloneDecision(result);
             }
 
             var decisionJson = ExtractJsonPayload(messageContent);
             if (string.IsNullOrWhiteSpace(decisionJson))
             {
                 result.ErrorMessage = "ローカルLLM応答からJSONを抽出できませんでした。";
-                return result;
+                CacheDecision(cacheKey, result);
+                return CloneDecision(result);
             }
 
             MergeDecision(result, decisionJson);
-            return result;
+            CacheDecision(cacheKey, result);
+            return CloneDecision(result);
         }
-        catch (TaskCanceledException)
+        catch (OperationCanceledException) when (!cancellationToken.IsCancellationRequested)
         {
             result.ErrorMessage = "ローカルLLM判定がタイムアウトしました。";
-            return result;
+            CacheDecision(cacheKey, result);
+            return CloneDecision(result);
         }
         catch (Exception ex)
         {
             result.ErrorMessage = $"ローカルLLM判定に失敗しました: {ex.Message}";
-            return result;
+            CacheDecision(cacheKey, result);
+            return CloneDecision(result);
         }
     }
 
@@ -115,19 +146,21 @@ public sealed class LocalLlmDecisionService
         return
             """
             You are an extractor for Japanese support emails.
-            Output STRICT JSON only, no markdown.
-            Required keys:
+            Output STRICT JSON only. Do not output markdown or explanations.
+            Keep the JSON compact.
+
+            Required top-level keys:
             {
               "company_name": "string",
               "default_os": "Windows|Linux|Both|Unspecified",
               "versioned_requests": [{"code":"string","version":"string","os":"Windows|Linux|Both|Unspecified"}],
               "matched_codes": ["string"]
             }
+
             Rules:
             - company_name must be requester company, not addressee company.
-            - Prefer latest reply body, ignore quoted old messages when possible.
+            - Prefer latest reply body and avoid quoted old threads.
             - versioned_requests include only explicit module+version requests.
-            - Use codes from known module list if possible.
             - matched_codes may include explicit module mentions without version.
             """;
     }
@@ -154,6 +187,11 @@ public sealed class LocalLlmDecisionService
         string endpoint,
         CancellationToken cancellationToken)
     {
+        if (TryGetCachedModelName(endpoint, out var cachedModelName))
+        {
+            return cachedModelName;
+        }
+
         using var response = await client.GetAsync($"{endpoint}/api/tags", cancellationToken);
         if (!response.IsSuccessStatusCode)
         {
@@ -190,7 +228,97 @@ public sealed class LocalLlmDecisionService
 
         var preferred = names.FirstOrDefault(name =>
             name.StartsWith("qwen2.5", StringComparison.OrdinalIgnoreCase));
-        return preferred ?? names[0];
+        preferred ??= names.FirstOrDefault(name =>
+            name.StartsWith("qwen", StringComparison.OrdinalIgnoreCase));
+        preferred ??= names[0];
+
+        ModelNameCache[endpoint] = new ModelCacheEntry(
+            preferred,
+            DateTimeOffset.UtcNow.Add(ModelNameCacheTtl));
+        return preferred;
+    }
+
+    private static bool TryGetCachedModelName(string endpoint, out string modelName)
+    {
+        modelName = string.Empty;
+        if (!ModelNameCache.TryGetValue(endpoint, out var entry))
+        {
+            return false;
+        }
+
+        if (entry.ExpiresAt <= DateTimeOffset.UtcNow)
+        {
+            ModelNameCache.TryRemove(endpoint, out _);
+            return false;
+        }
+
+        modelName = entry.ModelName;
+        return !string.IsNullOrWhiteSpace(modelName);
+    }
+
+    private static string BuildDecisionCacheKey(
+        string endpoint,
+        string memo,
+        IReadOnlyCollection<string> knownCodes)
+    {
+        var normalizedCodes = string.Join(
+            ",",
+            knownCodes
+                .Where(code => !string.IsNullOrWhiteSpace(code))
+                .Select(code => code.Trim().ToUpperInvariant())
+                .Distinct(StringComparer.OrdinalIgnoreCase)
+                .OrderBy(code => code, StringComparer.Ordinal));
+        var plain = $"{endpoint}\n{memo}\n{normalizedCodes}";
+        var hashBytes = SHA256.HashData(Encoding.UTF8.GetBytes(plain));
+        return Convert.ToHexString(hashBytes);
+    }
+
+    private bool TryGetCachedDecision(string cacheKey, out LocalLlmDecisionResult result)
+    {
+        result = new LocalLlmDecisionResult();
+        if (!_decisionCache.TryGetValue(cacheKey, out var entry))
+        {
+            return false;
+        }
+
+        if (entry.ExpiresAt <= DateTimeOffset.UtcNow)
+        {
+            _decisionCache.TryRemove(cacheKey, out _);
+            return false;
+        }
+
+        result = CloneDecision(entry.Result, isCached: true);
+        return true;
+    }
+
+    private void CacheDecision(string cacheKey, LocalLlmDecisionResult result)
+    {
+        var ttl = result.IsSuccess ? SuccessDecisionCacheTtl : FailureDecisionCacheTtl;
+        _decisionCache[cacheKey] = new DecisionCacheEntry(
+            CloneDecision(result),
+            DateTimeOffset.UtcNow.Add(ttl));
+    }
+
+    private static LocalLlmDecisionResult CloneDecision(LocalLlmDecisionResult source, bool isCached = false)
+    {
+        return new LocalLlmDecisionResult
+        {
+            ModelName = source.ModelName,
+            CompanyName = source.CompanyName,
+            DefaultOs = source.DefaultOs,
+            VersionedRequests = source.VersionedRequests
+                .Select(item => new LocalLlmVersionedRequest
+                {
+                    Code = item.Code,
+                    Version = item.Version,
+                    Os = item.Os
+                })
+                .ToList(),
+            MatchedCodes = source.MatchedCodes.ToList(),
+            RawResponse = source.RawResponse,
+            ErrorMessage = source.ErrorMessage,
+            IsCached = isCached
+        };
     }
 
     private static string ExtractAssistantContent(string responseText)
@@ -232,14 +360,81 @@ public sealed class LocalLlmDecisionService
             trimmed = string.Join(Environment.NewLine, lines).Trim();
         }
 
-        var start = trimmed.IndexOf('{');
-        var end = trimmed.LastIndexOf('}');
-        if (start < 0 || end < start)
+        if (IsValidJsonObject(trimmed))
         {
-            return string.Empty;
+            return trimmed;
         }
 
-        return trimmed[start..(end + 1)];
+        var bestCandidate = string.Empty;
+        var depth = 0;
+        var objectStart = -1;
+        for (var i = 0; i < trimmed.Length; i++)
+        {
+            var ch = trimmed[i];
+            if (ch == '{')
+            {
+                if (depth == 0)
+                {
+                    objectStart = i;
+                }
+
+                depth++;
+                continue;
+            }
+
+            if (ch != '}' || depth == 0)
+            {
+                continue;
+            }
+
+            depth--;
+            if (depth != 0 || objectStart < 0)
+            {
+                continue;
+            }
+
+            var candidate = trimmed[objectStart..(i + 1)];
+            if (IsValidJsonObject(candidate))
+            {
+                bestCandidate = candidate;
+            }
+        }
+
+        if (!string.IsNullOrWhiteSpace(bestCandidate))
+        {
+            return bestCandidate;
+        }
+
+        var start = trimmed.IndexOf('{');
+        var end = trimmed.LastIndexOf('}');
+        if (start >= 0 && end > start)
+        {
+            var fallback = trimmed[start..(end + 1)];
+            if (IsValidJsonObject(fallback))
+            {
+                return fallback;
+            }
+        }
+
+        return string.Empty;
+    }
+
+    private static bool IsValidJsonObject(string value)
+    {
+        if (string.IsNullOrWhiteSpace(value))
+        {
+            return false;
+        }
+
+        try
+        {
+            using var doc = JsonDocument.Parse(value);
+            return doc.RootElement.ValueKind == JsonValueKind.Object;
+        }
+        catch
+        {
+            return false;
+        }
     }
 
     private static void MergeDecision(LocalLlmDecisionResult result, string json)
@@ -307,13 +502,15 @@ public sealed class LocalLlmDecisionService
 
             foreach (var item in element.EnumerateArray())
             {
-                if (item.ValueKind == JsonValueKind.String)
+                if (item.ValueKind != JsonValueKind.String)
                 {
-                    var value = item.GetString() ?? string.Empty;
-                    if (!string.IsNullOrWhiteSpace(value))
-                    {
-                        yield return value;
-                    }
+                    continue;
+                }
+
+                var value = item.GetString() ?? string.Empty;
+                if (!string.IsNullOrWhiteSpace(value))
+                {
+                    yield return value;
                 }
             }
 
@@ -325,16 +522,22 @@ public sealed class LocalLlmDecisionService
     {
         foreach (var name in names)
         {
-            if (element.TryGetProperty(name, out var value) && value.ValueKind == JsonValueKind.String)
+            if (!element.TryGetProperty(name, out var value) || value.ValueKind != JsonValueKind.String)
             {
-                var text = value.GetString() ?? string.Empty;
-                if (!string.IsNullOrWhiteSpace(text))
-                {
-                    return text.Trim();
-                }
+                continue;
+            }
+
+            var text = value.GetString() ?? string.Empty;
+            if (!string.IsNullOrWhiteSpace(text))
+            {
+                return text.Trim();
             }
         }
 
         return string.Empty;
     }
+
+    private sealed record ModelCacheEntry(string ModelName, DateTimeOffset ExpiresAt);
+
+    private sealed record DecisionCacheEntry(LocalLlmDecisionResult Result, DateTimeOffset ExpiresAt);
 }

@@ -825,6 +825,7 @@ public partial class MainViewModel : ObservableObject
         var knownCodes = GetKnownMemoCodes();
         var knownCodeSet = new HashSet<string>(knownCodes, StringComparer.OrdinalIgnoreCase);
         var versionedRequests = ParseVersionedRequests(memo, knownCodes);
+        var parseResult = _memoService.ParseMemo(memo, knownCodes, _synonyms);
         var defaultRequestedOs = GetDefaultRequestedOsFromMemo(memoForAutoParse);
         TryAutoFillCompanyNameFromMemo(memoForAutoParse);
         var decisionLines = new List<string>();
@@ -837,7 +838,12 @@ public partial class MainViewModel : ObservableObject
         }
 
         LocalLlmDecisionResult? llmDecision = null;
-        if (ShouldRunLocalLlm(versionedRequests, defaultRequestedOs, CompanyName))
+        if (ShouldRunLocalLlm(
+                versionedRequests,
+                parseResult,
+                defaultRequestedOs,
+                osEvidenceLines.Count,
+                CompanyName))
         {
             llmDecision = await _localLlmDecisionService.AnalyzeMemoAsync(
                 Settings.LocalLlmEndpoint,
@@ -845,7 +851,8 @@ public partial class MainViewModel : ObservableObject
                 knownCodes);
             if (llmDecision.IsSuccess)
             {
-                decisionLines.Add($"LLM判定: 成功 (model: {llmDecision.ModelName})");
+                var cacheTag = llmDecision.IsCached ? " / cache" : string.Empty;
+                decisionLines.Add($"LLM判定: 成功 (model: {llmDecision.ModelName}{cacheTag})");
                 if (TryApplyCompanyNameFromLlm(llmDecision.CompanyName))
                 {
                     decisionLines.Add($"会社名(LLM): {CompanyName}");
@@ -1015,7 +1022,6 @@ public partial class MainViewModel : ObservableObject
             }
         }
 
-        var parseResult = _memoService.ParseMemo(memo, knownCodes, _synonyms);
         ApplyMemoParseResult(parseResult);
         var matchedCodes = new HashSet<string>(parseResult.MatchedCodes, StringComparer.OrdinalIgnoreCase);
         if (llmDecision?.IsSuccess == true)
@@ -7351,7 +7357,9 @@ public partial class MainViewModel : ObservableObject
 
     private bool ShouldRunLocalLlm(
         IReadOnlyCollection<VersionedRequest> versionedRequests,
+        MemoParseResult parseResult,
         RequestedOs defaultRequestedOs,
+        int osEvidenceCount,
         string? companyName)
     {
         if (!IsLocalLlmDecisionEnabled())
@@ -7361,8 +7369,31 @@ public partial class MainViewModel : ObservableObject
 
         var hasCompany = !string.IsNullOrWhiteSpace(companyName);
         var hasVersionedRequests = versionedRequests.Count > 0;
-        var hasRequestedOs = defaultRequestedOs != RequestedOs.Unspecified;
-        return !hasCompany || !hasVersionedRequests || !hasRequestedOs;
+        var hasMatchedCodes = parseResult.MatchedCodes.Count > 0;
+        var hasAmbiguousTerms = parseResult.AmbiguousMatches.Count > 0;
+        var unresolvedCount = parseResult.UnresolvedTerms.Count;
+
+        // Strong baseline: do not call LLM when existing deterministic rules are already enough.
+        if (hasCompany &&
+            hasVersionedRequests &&
+            unresolvedCount == 0 &&
+            !hasAmbiguousTerms &&
+            (defaultRequestedOs != RequestedOs.Unspecified || osEvidenceCount == 0))
+        {
+            return false;
+        }
+
+        var noStructuredExtraction = !hasVersionedRequests && !hasMatchedCodes;
+        var missingEssentials = !hasCompany || noStructuredExtraction;
+        var hasHeavyUnresolved = unresolvedCount >= 3;
+        var hasVersionLikeUnresolved = parseResult.UnresolvedTerms.Any(line => VersionRegex.IsMatch(line));
+        var hasOsEvidenceButUnspecified = defaultRequestedOs == RequestedOs.Unspecified && osEvidenceCount > 0;
+
+        return hasAmbiguousTerms
+               || hasHeavyUnresolved
+               || hasVersionLikeUnresolved
+               || hasOsEvidenceButUnspecified
+               || missingEssentials;
     }
 
     private static RequestedOs ParseRequestedOsToken(string? os)

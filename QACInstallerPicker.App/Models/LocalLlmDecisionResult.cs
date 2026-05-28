@@ -11,6 +11,7 @@ public sealed class LocalLlmDecisionResult
     public List<string> MatchedCodes { get; set; } = new();
     public string RawResponse { get; set; } = string.Empty;
     public string ErrorMessage { get; set; } = string.Empty;
+    public bool IsCached { get; set; }
     public bool IsSuccess => string.IsNullOrWhiteSpace(ErrorMessage);
 }
 
