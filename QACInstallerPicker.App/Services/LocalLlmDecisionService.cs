@@ -22,7 +22,7 @@ public sealed class LocalLlmDecisionService
     private static readonly TimeSpan LlmRequestTimeout = TimeSpan.FromSeconds(12);
     private static readonly TimeSpan ModelNameCacheTtl = TimeSpan.FromMinutes(30);
     private static readonly TimeSpan SuccessDecisionCacheTtl = TimeSpan.FromMinutes(20);
-    private static readonly TimeSpan FailureDecisionCacheTtl = TimeSpan.FromMinutes(1);
+    private static readonly TimeSpan FailureDecisionCacheTtl = TimeSpan.FromMinutes(5);
 
     private static readonly ConcurrentDictionary<string, ModelCacheEntry> ModelNameCache =
         new(StringComparer.OrdinalIgnoreCase);

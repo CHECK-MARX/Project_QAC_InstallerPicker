@@ -860,7 +860,8 @@ public partial class MainViewModel : ObservableObject
             }
             else
             {
-                decisionLines.Add($"LLM判定: 失敗 ({llmDecision.ErrorMessage})");
+                var cacheTag = llmDecision.IsCached ? " / cache" : string.Empty;
+                decisionLines.Add($"LLM判定: 失敗{cacheTag} ({llmDecision.ErrorMessage})");
             }
         }
         else if (IsLocalLlmDecisionEnabled())
@@ -7373,11 +7374,9 @@ public partial class MainViewModel : ObservableObject
         var hasAmbiguousTerms = parseResult.AmbiguousMatches.Count > 0;
         var unresolvedCount = parseResult.UnresolvedTerms.Count;
 
-        // Strong baseline: do not call LLM when existing deterministic rules are already enough.
+        // Strong baseline: when company + version requests are already extracted, prefer deterministic rules.
         if (hasCompany &&
             hasVersionedRequests &&
-            unresolvedCount == 0 &&
-            !hasAmbiguousTerms &&
             (defaultRequestedOs != RequestedOs.Unspecified || osEvidenceCount == 0))
         {
             return false;
@@ -7388,10 +7387,11 @@ public partial class MainViewModel : ObservableObject
         var hasHeavyUnresolved = unresolvedCount >= 3;
         var hasVersionLikeUnresolved = parseResult.UnresolvedTerms.Any(line => VersionRegex.IsMatch(line));
         var hasOsEvidenceButUnspecified = defaultRequestedOs == RequestedOs.Unspecified && osEvidenceCount > 0;
+        var hasActionableAmbiguity = hasAmbiguousTerms && !hasVersionedRequests;
+        var hasActionableUnresolved = (hasHeavyUnresolved || hasVersionLikeUnresolved) && !hasVersionedRequests;
 
-        return hasAmbiguousTerms
-               || hasHeavyUnresolved
-               || hasVersionLikeUnresolved
+        return hasActionableAmbiguity
+               || hasActionableUnresolved
                || hasOsEvidenceButUnspecified
                || missingEssentials;
     }
