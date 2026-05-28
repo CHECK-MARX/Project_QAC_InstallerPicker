@@ -342,6 +342,78 @@ public partial class MainWindow : Window
         _customTabPopupWindow.Activate();
     }
 
+    private void OpenMemoEditorButton_Click(object sender, RoutedEventArgs e)
+    {
+        var window = new LargeTextEditorWindow(
+            "メール/メモ 拡大編集",
+            "メール/メモ",
+            _viewModel.MemoText,
+            isReadOnly: false,
+            applyButtonText: "反映")
+        {
+            Owner = this
+        };
+
+        if (window.ShowDialog() == true)
+        {
+            _viewModel.MemoText = window.EditedText;
+            if (_viewModel.ApplyQuickRequestCommand.CanExecute(null))
+            {
+                _viewModel.ApplyQuickRequestCommand.Execute(null);
+            }
+        }
+    }
+
+    private void OpenDecisionLogButton_Click(object sender, RoutedEventArgs e)
+    {
+        var logText = _viewModel.QuickRequestDecisionLog;
+        if (string.IsNullOrWhiteSpace(logText))
+        {
+            logText = _viewModel.QuickRequestResult;
+        }
+
+        var window = new LargeTextEditorWindow(
+            "Decision Log",
+            "Parsing and selection reasons",
+            logText,
+            isReadOnly: true)
+        {
+            Owner = this
+        };
+        window.ShowDialog();
+    }
+
+    private void OpenUnresolvedEditorButton_Click(object sender, RoutedEventArgs e)
+    {
+        var window = new LargeTextEditorWindow(
+            "未解決内容 拡大編集",
+            "未解決内容（`キーワード => コード` の形式で学習登録可能）",
+            _viewModel.UnresolvedMemoText,
+            isReadOnly: false,
+            applyButtonText: "反映")
+        {
+            Owner = this
+        };
+
+        if (window.ShowDialog() == true)
+        {
+            _viewModel.UnresolvedMemoText = window.EditedText;
+        }
+    }
+
+    private void OpenMemoHistoryButton_Click(object sender, RoutedEventArgs e)
+    {
+        var window = new LargeTextEditorWindow(
+            "メモ解析 履歴",
+            "学習済みキーワード / 未解決履歴",
+            _viewModel.BuildMemoLearningHistoryText(),
+            isReadOnly: true)
+        {
+            Owner = this
+        };
+        window.ShowDialog();
+    }
+
     private static T? FindVisualParent<T>(DependencyObject? current) where T : DependencyObject
     {
         while (current != null)

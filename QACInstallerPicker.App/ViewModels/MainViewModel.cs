@@ -32,6 +32,7 @@ public partial class MainViewModel : ObservableObject
     private readonly BulkSelectionExcelService _bulkSelectionExcelService;
     private readonly InstallerScanService _scanService;
     private readonly MemoParserService _memoService;
+    private readonly LocalLlmDecisionService _localLlmDecisionService;
     private readonly DatabaseService _databaseService;
     private readonly HashService _hashService;
     private readonly CopyService _copyService;
@@ -50,14 +51,68 @@ public partial class MainViewModel : ObservableObject
     private bool _isRestoringCustomState;
     private bool _isApplyingSelectionHistory;
     private bool _isApplyingShipmentHistoryViewFilters;
+    private bool _isSettingCompanyNameFromMemo;
+    private bool _isCompanyNameAutoFilled;
     private static readonly Regex VersionRegex = new(@"\d+(?:\.\d+)+", RegexOptions.Compiled);
     private static readonly Regex VersionNumberRegex = new(@"\d+", RegexOptions.Compiled);
+    private static readonly Regex WindowsTokenRegex = new(
+        @"(?<![A-Za-z0-9])(windows?|win(?:32|64)?)(?![A-Za-z0-9])",
+        RegexOptions.Compiled | RegexOptions.IgnoreCase);
+    private static readonly Regex LinuxTokenRegex = new(
+        @"(?<![A-Za-z0-9])(linux|lin)(?![A-Za-z0-9])",
+        RegexOptions.Compiled | RegexOptions.IgnoreCase);
+    private static readonly Regex QuotedMessageStartRegex = new(
+        @"^\s*(From|Sent|To|Cc|件名|送信|宛先)\s*[:：]",
+        RegexOptions.Compiled | RegexOptions.IgnoreCase);
+    private static readonly Regex ReplyHeaderStartRegex = new(
+        @"^\s*(?:On\s.+\swrote:|[- ]*Original Message[- ]*|[- ]*返信メッセージ[- ]*)",
+        RegexOptions.Compiled | RegexOptions.IgnoreCase);
+    private static readonly Regex QuotedLineRegex = new(
+        @"^\s*>+",
+        RegexOptions.Compiled);
+    private static readonly Regex CompanyLabelRegex = new(
+        @"(?:会社名|社名|企業名|法人名)\s*[:：]\s*(?<name>[^\r\n]+)",
+        RegexOptions.Compiled | RegexOptions.IgnoreCase);
+    private static readonly Regex CompanyHonorificRegex = new(
+        @"(?<name>[^\r\n]{2,80}?)(?:御中|様)",
+        RegexOptions.Compiled);
+    private static readonly Regex CompanyKeywordRegex = new(
+        @"(?<name>(?:株式会社|有限会社|合同会社)[^\r\n]{1,80}|[^\r\n]{1,80}(?:株式会社|有限会社|合同会社))",
+        RegexOptions.Compiled);
+    private static readonly Regex SignatureSeparatorRegex = new(
+        @"^(?:--+|__+|==+|[-_=\u2500\u2014\u2015]{2,}|[─━]{2,})$",
+        RegexOptions.Compiled);
+    private static readonly Regex CompanyInlineRegex = new(
+        @"(?<name>(?:株式会社|有限会社|合同会社)\s*[^\r\n,，、。.!！?？:：\(\)（）\[\]【】<>＜＞「」『』]{1,80}|[^\r\n,，、。.!！?？:：\(\)（）\[\]【】<>＜＞「」『』]{1,80}(?:株式会社|有限会社|合同会社))",
+        RegexOptions.Compiled);
+    private static readonly Regex AddresseeLineRegex = new(
+        @"(?:様|御中)$",
+        RegexOptions.Compiled);
+    private static readonly Regex SelfIntroPhraseRegex = new(
+        @"(?:です|でございます|と申します|となります)",
+        RegexOptions.Compiled);
+    private static readonly Regex SelfIntroCompanyRegex = new(
+        @"(?<name>[^\s　、。,.]{2,60})の[^\s　、。,.]{1,24}(?:です|でございます|と申します|となります)",
+        RegexOptions.Compiled);
+    private static readonly Regex OsBothIntentRegex = new(
+        @"(?:両方|双方|いずれも|どちらも|それぞれ|各OS|全OS|both)",
+        RegexOptions.Compiled | RegexOptions.IgnoreCase);
+    private static readonly Regex OsQuestionRegex = new(
+        @"(?:どちら|でしょうか|ですか|ますか|\?|？|確認)",
+        RegexOptions.Compiled | RegexOptions.IgnoreCase);
+    private static readonly Regex OsRequestRegex = new(
+        @"(?:お願いいたします|お願いします|希望|指定|利用|で\b|版で)",
+        RegexOptions.Compiled | RegexOptions.IgnoreCase);
+    private static readonly Regex IntroSuffixRegex = new(
+        @"の[^の]{1,24}(?:です|でございます|と申します|となります).*$",
+        RegexOptions.Compiled);
+    private static readonly Regex MemoMappingRegex = new(
+        @"^(?<term>.+?)\s*(?:=>|->|→|=|＝)\s*(?<code>[A-Za-z0-9+]+)\s*$",
+        RegexOptions.Compiled);
     private const string ScanOnlyVersionLabel = "共有スキャン";
     private const string HelixQacCode = "HelixQAC";
     private const string CustomTabLabelPrefix = "カスタム:";
     private const string CustomZipSummaryCode = "CUSTOMZIP";
-    private const string OsTokenWindows = "windows";
-    private const string OsTokenLinux = "linux";
     private static readonly HashSet<string> IgnoredAuxiliaryFileNames = new(StringComparer.OrdinalIgnoreCase)
     {
         "Thumbs.db",
@@ -134,6 +189,8 @@ public partial class MainViewModel : ObservableObject
     private const int ShipmentHistoryViewTabIndex = 5;
     private const string ComplianceModuleSuffix = "コンプライアンスモジュール";
     private const int SelectionHistoryLimit = 5;
+    private const int MemoUnresolvedHistoryLimit = 200;
+    private const string AiModeLocalLlm = "LocalLlm";
     private const string AlreadyDownloadedReason = "既にダウンロード済み（ダブルクリックで再DLに含める）";
     private const string ShipmentHistoryFilterAllOption = "（すべて）";
     private const string ShipmentHistoryFilterNoneOption = "（なし）";
@@ -161,6 +218,7 @@ public partial class MainViewModel : ObservableObject
         _bulkSelectionExcelService = new BulkSelectionExcelService();
         _scanService = new InstallerScanService();
         _memoService = new MemoParserService();
+        _localLlmDecisionService = new LocalLlmDecisionService();
         _databaseService = new DatabaseService();
         _hashService = new HashService(_databaseService);
         _copyService = new CopyService();
@@ -175,6 +233,7 @@ public partial class MainViewModel : ObservableObject
         TransferItems = new ObservableCollection<TransferItemViewModel>();
         HistoryItems = new ObservableCollection<HistoryItemViewModel>();
         UnresolvedTerms = new ObservableCollection<string>();
+        MemoUnresolvedHistoryItems = new ObservableCollection<string>();
         AmbiguousTerms = new ObservableCollection<AmbiguousMatchViewModel>();
         TransferSummary = new TransferSummaryViewModel();
         ScanLogicalItems = new ObservableCollection<LogicalItem>();
@@ -213,6 +272,7 @@ public partial class MainViewModel : ObservableObject
     public ObservableCollection<TransferItemViewModel> TransferItems { get; }
     public ObservableCollection<HistoryItemViewModel> HistoryItems { get; }
     public ObservableCollection<string> UnresolvedTerms { get; }
+    public ObservableCollection<string> MemoUnresolvedHistoryItems { get; }
     public ObservableCollection<AmbiguousMatchViewModel> AmbiguousTerms { get; }
     public TransferSummaryViewModel TransferSummary { get; }
     public ObservableCollection<LogicalItem> ScanLogicalItems { get; }
@@ -333,6 +393,9 @@ public partial class MainViewModel : ObservableObject
     private string _memoText = string.Empty;
 
     [ObservableProperty]
+    private string _unresolvedMemoText = string.Empty;
+
+    [ObservableProperty]
     private string _companyName = string.Empty;
 
     [ObservableProperty]
@@ -343,6 +406,9 @@ public partial class MainViewModel : ObservableObject
 
     [ObservableProperty]
     private string _quickRequestResult = string.Empty;
+
+    [ObservableProperty]
+    private string _quickRequestDecisionLog = string.Empty;
 
     [ObservableProperty]
     private string _uploadListText = string.Empty;
@@ -531,7 +597,9 @@ public partial class MainViewModel : ObservableObject
     {
         await _databaseService.InitializeAsync();
         _synonyms = _memoService.LoadSynonyms(AppPaths.SynonymsPath);
+        RestoreMemoLearnedSynonymsFromSettings();
         AddComplianceAliases(_synonyms);
+        LoadMemoUnresolvedHistoryFromSettings();
 
         if (string.IsNullOrWhiteSpace(Settings.ExcelPath) || !File.Exists(Settings.ExcelPath))
         {
@@ -556,6 +624,11 @@ public partial class MainViewModel : ObservableObject
     public void ReloadSettings()
     {
         Settings = _settingsService.Load();
+        if (_synonyms.Count > 0)
+        {
+            RestoreMemoLearnedSynonymsFromSettings();
+        }
+        LoadMemoUnresolvedHistoryFromSettings();
         RestoreCustomStateFromSettings();
         LoadSelectionStateHistoryFromSettings();
         if (TransferItems.Count == 0)
@@ -714,22 +787,12 @@ public partial class MainViewModel : ObservableObject
             return;
         }
 
-        var knownCodes = GetKnownModuleCodes();
-        var result = _memoService.ParseMemo(MemoText ?? string.Empty, knownCodes, _synonyms);
-
-        UnresolvedTerms.Clear();
-        foreach (var term in result.UnresolvedTerms)
-        {
-            UnresolvedTerms.Add(term);
-        }
-
-        AmbiguousTerms.Clear();
-        foreach (var match in result.AmbiguousMatches)
-        {
-            var vm = new AmbiguousMatchViewModel(match.Term, match.Candidates);
-            vm.SelectedCodeChanged += (_, code) => SelectByCode(code, null);
-            AmbiguousTerms.Add(vm);
-        }
+        var fullMemo = MemoText ?? string.Empty;
+        var memoForAutoParse = GetMemoPrimarySegmentForAutoParse(MemoText ?? string.Empty);
+        TryAutoFillCompanyNameFromMemo(memoForAutoParse);
+        var knownCodes = GetKnownMemoCodes();
+        var result = _memoService.ParseMemo(fullMemo, knownCodes, _synonyms);
+        ApplyMemoParseResult(result);
 
         foreach (var code in result.MatchedCodes)
         {
@@ -740,9 +803,10 @@ public partial class MainViewModel : ObservableObject
     }
 
     [RelayCommand]
-    private void ApplyQuickRequest()
+    private async Task ApplyQuickRequest()
     {
-        if (string.IsNullOrWhiteSpace(MemoText))
+        var memo = MemoText ?? string.Empty;
+        if (string.IsNullOrWhiteSpace(memo))
         {
             WpfMessageBox.Show("メール/メモを入力してください。", "情報不足", MessageBoxButton.OK, MessageBoxImage.Information);
             return;
@@ -757,20 +821,67 @@ public partial class MainViewModel : ObservableObject
         }
 
         ClearManualPicks();
+        var memoForAutoParse = GetMemoPrimarySegmentForAutoParse(memo);
+        var knownCodes = GetKnownMemoCodes();
+        var knownCodeSet = new HashSet<string>(knownCodes, StringComparer.OrdinalIgnoreCase);
+        var versionedRequests = ParseVersionedRequests(memo, knownCodes);
+        var defaultRequestedOs = GetDefaultRequestedOsFromMemo(memoForAutoParse);
+        TryAutoFillCompanyNameFromMemo(memoForAutoParse);
+        var decisionLines = new List<string>();
+        var company = string.IsNullOrWhiteSpace(CompanyName) ? "(未設定)" : CompanyName.Trim();
+        decisionLines.Add($"会社名: {company} ({(_isCompanyNameAutoFilled ? "自動抽出" : "既存/手入力")})");
+        var osEvidenceLines = CollectOsEvidenceLines(memoForAutoParse);
+        if (osEvidenceLines.Count > 0)
+        {
+            decisionLines.Add($"OS根拠: {string.Join(" / ", osEvidenceLines.Select(line => BuildPreviewText(line, 60)))}");
+        }
 
-        var helixMatch = FindHelixVersionFromText(MemoText);
+        LocalLlmDecisionResult? llmDecision = null;
+        if (ShouldRunLocalLlm(versionedRequests, defaultRequestedOs, CompanyName))
+        {
+            llmDecision = await _localLlmDecisionService.AnalyzeMemoAsync(
+                Settings.LocalLlmEndpoint,
+                memoForAutoParse,
+                knownCodes);
+            if (llmDecision.IsSuccess)
+            {
+                decisionLines.Add($"LLM判定: 成功 (model: {llmDecision.ModelName})");
+                if (TryApplyCompanyNameFromLlm(llmDecision.CompanyName))
+                {
+                    decisionLines.Add($"会社名(LLM): {CompanyName}");
+                }
+            }
+            else
+            {
+                decisionLines.Add($"LLM判定: 失敗 ({llmDecision.ErrorMessage})");
+            }
+        }
+        else if (IsLocalLlmDecisionEnabled())
+        {
+            decisionLines.Add("LLM判定: スキップ (既存ルールで十分に抽出できたため)");
+        }
+
+        var helixMatch = FindHelixVersionFromText(memoForAutoParse);
+        helixMatch ??= FindHelixVersionFromText(memo);
         var versionResult = "バージョン: (選択中のまま)";
         if (helixMatch != null)
         {
             SelectedVersion = helixMatch;
             versionResult = $"バージョン: {helixMatch.Version}";
+            decisionLines.Add($"Helix判定: {helixMatch.Version}");
         }
         else
         {
-            var requestedHelixVersion = FindRequestedHelixVersionToken(MemoText);
+            var requestedHelixVersion = FindRequestedHelixVersionToken(memoForAutoParse);
+            requestedHelixVersion ??= FindRequestedHelixVersionToken(memo);
             if (!string.IsNullOrWhiteSpace(requestedHelixVersion))
             {
                 versionResult = $"該当バージョンなし: {requestedHelixVersion}";
+                decisionLines.Add($"Helix判定: 対応表に該当なし ({requestedHelixVersion})");
+            }
+            else
+            {
+                decisionLines.Add("Helix判定: 指定なし");
             }
         }
 
@@ -790,39 +901,157 @@ public partial class MainViewModel : ObservableObject
             }
         });
 
-        var knownCodes = GetKnownModuleCodes();
-        var versionedRequests = ParseVersionedRequests(MemoText, knownCodes);
+        if (llmDecision?.IsSuccess == true)
+        {
+            var llmDefaultRequestedOs = ParseRequestedOsToken(llmDecision.DefaultOs);
+            if (llmDefaultRequestedOs != RequestedOs.Unspecified)
+            {
+                if (defaultRequestedOs == RequestedOs.Unspecified)
+                {
+                    defaultRequestedOs = llmDefaultRequestedOs;
+                    decisionLines.Add($"既定OS(LLM採用): {FormatRequestedOs(llmDefaultRequestedOs)}");
+                }
+                else
+                {
+                    decisionLines.Add(
+                        $"既定OS(LLM参考): {FormatRequestedOs(llmDefaultRequestedOs)} / 既存: {FormatRequestedOs(defaultRequestedOs)}");
+                }
+            }
+
+            foreach (var llmRequest in llmDecision.VersionedRequests)
+            {
+                var normalizedCode = ResolveKnownCodeCandidate(llmRequest.Code, knownCodes);
+                if (string.IsNullOrWhiteSpace(normalizedCode))
+                {
+                    decisionLines.Add($"LLM版数指定(未知コード): {llmRequest.Code}");
+                    continue;
+                }
+
+                var requestedVersions = ExtractRequestedVersionTokens(llmRequest.Version);
+                if (requestedVersions.Count == 0)
+                {
+                    decisionLines.Add($"LLM版数指定(版数なし): {normalizedCode}");
+                    continue;
+                }
+
+                var requestedOs = ParseRequestedOsToken(llmRequest.Os);
+                foreach (var requestedVersion in requestedVersions)
+                {
+                    if (!knownCodeSet.Contains(normalizedCode))
+                    {
+                        continue;
+                    }
+
+                    var existingIndex = versionedRequests.FindIndex(request =>
+                        request.Code.Equals(normalizedCode, StringComparison.OrdinalIgnoreCase) &&
+                        request.Version.Equals(requestedVersion, StringComparison.OrdinalIgnoreCase));
+                    if (existingIndex >= 0)
+                    {
+                        var existing = versionedRequests[existingIndex];
+                        versionedRequests[existingIndex] = existing with
+                        {
+                            OsSelection = MergeRequestedOs(existing.OsSelection, requestedOs)
+                        };
+                    }
+                    else
+                    {
+                        versionedRequests.Add(new VersionedRequest(normalizedCode, requestedVersion, requestedOs));
+                    }
+                }
+            }
+        }
+
+        decisionLines.Add($"既定OS判定: {FormatRequestedOs(defaultRequestedOs)}");
+        if (versionedRequests.Count == 0)
+        {
+            decisionLines.Add("版数指定: なし");
+        }
+        else
+        {
+            decisionLines.Add("版数指定: " + string.Join(", ",
+                versionedRequests.Select(r => $"{GetSelectionTargetCode(r.Code)} {r.Version} [{FormatRequestedOs(r.OsSelection)}]")));
+        }
         var unmatchedCodes = new List<string>();
+        var versionRequestedTargets = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
         var handledSelectionTargets = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
         var osRequests = new Dictionary<ModuleRowViewModel, RequestedOs>();
         foreach (var request in versionedRequests)
         {
-            if (!SelectAcrossTabsByVersion(request.Code, request.Version, request.OsSelection, osRequests))
+            var selectionCode = GetSelectionTargetCode(request.Code);
+            var requestLabel = $"{selectionCode} {request.Version} [{FormatRequestedOs(request.OsSelection)}]";
+            versionRequestedTargets.Add(selectionCode);
+            if (SelectAcrossTabsByVersion(request.Code, request.Version, request.OsSelection, osRequests))
             {
-                unmatchedCodes.Add(request.Code);
+                handledSelectionTargets.Add(selectionCode);
+                decisionLines.Add($"版数一致選択: {requestLabel}");
+                continue;
             }
 
-            handledSelectionTargets.Add(GetSelectionTargetCode(request.Code));
+            if (RequiresStrictVersionMatch(request.Code))
+            {
+                unmatchedCodes.Add($"{request.Code}({request.Version})");
+                decisionLines.Add($"版数不一致で除外: {requestLabel}");
+                continue;
+            }
+
+            // Version mismatch fallback: still try selecting by code only.
+            if (!SelectByCode(request.Code, string.Empty))
+            {
+                unmatchedCodes.Add($"{request.Code}({request.Version})");
+                decisionLines.Add($"版数不一致かつコード選択不可: {requestLabel}");
+                continue;
+            }
+
+            handledSelectionTargets.Add(selectionCode);
+            decisionLines.Add($"版数不一致のためコードのみ選択: {requestLabel}");
+            if (SelectedVersion != null)
+            {
+                foreach (var module in SelectedVersion.Modules.Where(m =>
+                             m.IsSelected &&
+                             m.Code.Equals(selectionCode, StringComparison.OrdinalIgnoreCase)))
+                {
+                    RecordRequestedOs(osRequests, module, request.OsSelection);
+                }
+            }
         }
 
-        var parseResult = _memoService.ParseMemo(MemoText, knownCodes, _synonyms);
-        UnresolvedTerms.Clear();
-        foreach (var term in parseResult.UnresolvedTerms)
+        var parseResult = _memoService.ParseMemo(memo, knownCodes, _synonyms);
+        ApplyMemoParseResult(parseResult);
+        var matchedCodes = new HashSet<string>(parseResult.MatchedCodes, StringComparer.OrdinalIgnoreCase);
+        if (llmDecision?.IsSuccess == true)
         {
-            UnresolvedTerms.Add(term);
+            foreach (var llmCode in llmDecision.MatchedCodes)
+            {
+                var normalizedCode = ResolveKnownCodeCandidate(llmCode, knownCodes);
+                if (string.IsNullOrWhiteSpace(normalizedCode))
+                {
+                    continue;
+                }
+
+                if (!knownCodeSet.Contains(normalizedCode))
+                {
+                    continue;
+                }
+
+                matchedCodes.Add(normalizedCode);
+            }
         }
 
-        AmbiguousTerms.Clear();
-        foreach (var match in parseResult.AmbiguousMatches)
+        if (matchedCodes.Count > 0)
         {
-            var vm = new AmbiguousMatchViewModel(match.Term, match.Candidates);
-            vm.SelectedCodeChanged += (_, code) => SelectByCode(code, null);
-            AmbiguousTerms.Add(vm);
+            decisionLines.Add("キーワード一致: " + string.Join(", ", matchedCodes.OrderBy(code => code, StringComparer.OrdinalIgnoreCase)));
         }
 
-        foreach (var code in parseResult.MatchedCodes)
+        foreach (var code in matchedCodes)
         {
-            if (handledSelectionTargets.Contains(GetSelectionTargetCode(code)))
+            var selectionCode = GetSelectionTargetCode(code);
+            if (handledSelectionTargets.Contains(selectionCode))
+            {
+                continue;
+            }
+
+            // When version is explicitly requested, do not override with unversioned code picks.
+            if (versionRequestedTargets.Contains(selectionCode))
             {
                 continue;
             }
@@ -835,10 +1064,10 @@ public partial class MainViewModel : ObservableObject
 
         if (versionedRequests.Count == 0)
         {
-            AddBasePickIfRequested(MemoText, string.Empty);
+            AddBasePickIfRequested(memo, string.Empty);
         }
 
-        ApplyQuickRequestOsSelection(osRequests);
+        ApplyQuickRequestOsSelection(osRequests, defaultRequestedOs);
         UpdateBasket();
 
         var selectedCodes = HelixVersions.Count > 0
@@ -861,15 +1090,862 @@ public partial class MainViewModel : ObservableObject
         }
 
         QuickRequestResult = string.Join(" | ", summary);
+        decisionLines.Add($"未解決: {parseResult.UnresolvedTerms.Count}件 / 曖昧: {parseResult.AmbiguousMatches.Count}件");
+        QuickRequestDecisionLog = string.Join(Environment.NewLine, decisionLines);
     }
 
     [RelayCommand]
     private void ClearMemo()
     {
         MemoText = string.Empty;
+        UnresolvedMemoText = string.Empty;
         QuickRequestResult = string.Empty;
+        QuickRequestDecisionLog = string.Empty;
         UnresolvedTerms.Clear();
         AmbiguousTerms.Clear();
+    }
+
+    [RelayCommand]
+    private async Task ReapplyMemoWithCorrections()
+    {
+        var memo = MemoText ?? string.Empty;
+        var unresolved = UnresolvedMemoText ?? string.Empty;
+        if (string.IsNullOrWhiteSpace(memo) && string.IsNullOrWhiteSpace(unresolved))
+        {
+            WpfMessageBox.Show("メール/メモまたは未解決内容を入力してください。", "情報不足", MessageBoxButton.OK, MessageBoxImage.Information);
+            return;
+        }
+
+        var correctedLines = new List<string>();
+        var knownCodes = new HashSet<string>(GetKnownMemoCodes(), StringComparer.OrdinalIgnoreCase);
+        foreach (var rawLine in unresolved.Split(new[] { "\r\n", "\n" }, StringSplitOptions.RemoveEmptyEntries))
+        {
+            var line = rawLine.Trim();
+            if (line.Length == 0)
+            {
+                continue;
+            }
+
+            var mapping = MemoMappingRegex.Match(line);
+            if (mapping.Success)
+            {
+                var term = mapping.Groups["term"].Value.Trim();
+                var code = mapping.Groups["code"].Value.Trim();
+                if (term.Length > 0 && code.Length > 0)
+                {
+                    if (knownCodes.Contains(code))
+                    {
+                        LearnMemoSynonym(term, code);
+                        SelectByCode(code, string.Empty);
+                        continue;
+                    }
+
+                    var normalizedCode = NormalizeModuleCode(code);
+                    if (knownCodes.Contains(normalizedCode))
+                    {
+                        LearnMemoSynonym(term, normalizedCode);
+                        SelectByCode(normalizedCode, string.Empty);
+                        continue;
+                    }
+                }
+            }
+
+            correctedLines.Add(line);
+        }
+
+        MemoText = MergeDistinctMemoLines(memo, correctedLines);
+        await ApplyQuickRequest();
+    }
+
+    public string BuildMemoLearningHistoryText()
+    {
+        var builder = new StringBuilder();
+        builder.AppendLine("[学習済みキーワード]");
+        var learned = Settings.MemoLearnedSynonyms ?? new Dictionary<string, List<string>>();
+        if (learned.Count == 0)
+        {
+            builder.AppendLine("(なし)");
+        }
+        else
+        {
+            foreach (var pair in learned.OrderBy(pair => pair.Key, StringComparer.OrdinalIgnoreCase))
+            {
+                var term = pair.Key?.Trim() ?? string.Empty;
+                if (string.IsNullOrWhiteSpace(term))
+                {
+                    continue;
+                }
+
+                var codes = (pair.Value ?? new List<string>())
+                    .Where(value => !string.IsNullOrWhiteSpace(value))
+                    .Select(value => value.Trim())
+                    .Distinct(StringComparer.OrdinalIgnoreCase)
+                    .ToArray();
+                if (codes.Length == 0)
+                {
+                    continue;
+                }
+
+                builder.AppendLine($"{term} => {string.Join(", ", codes)}");
+            }
+        }
+
+        builder.AppendLine();
+        builder.AppendLine("[未解決履歴]");
+        if (MemoUnresolvedHistoryItems.Count == 0)
+        {
+            builder.AppendLine("(なし)");
+        }
+        else
+        {
+            foreach (var term in MemoUnresolvedHistoryItems)
+            {
+                builder.AppendLine(term);
+            }
+        }
+
+        return builder.ToString().TrimEnd();
+    }
+
+    private void ApplyMemoParseResult(MemoParseResult result)
+    {
+        UnresolvedTerms.Clear();
+        foreach (var term in result.UnresolvedTerms)
+        {
+            UnresolvedTerms.Add(term);
+        }
+
+        UnresolvedMemoText = string.Join(Environment.NewLine, result.UnresolvedTerms);
+        SaveUnresolvedTermsToHistory(result.UnresolvedTerms);
+
+        AmbiguousTerms.Clear();
+        foreach (var match in result.AmbiguousMatches)
+        {
+            var vm = new AmbiguousMatchViewModel(match.Term, match.Candidates);
+            vm.SelectedCodeChanged += (_, code) =>
+            {
+                LearnMemoSynonym(match.Term, code);
+                SelectByCode(code, null);
+                UpdateBasket();
+            };
+            AmbiguousTerms.Add(vm);
+        }
+    }
+
+    private List<string> GetKnownMemoCodes()
+    {
+        var set = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        foreach (var code in GetKnownModuleCodes())
+        {
+            if (string.IsNullOrWhiteSpace(code))
+            {
+                continue;
+            }
+
+            set.Add(code);
+            foreach (var candidate in GetModuleCodeCandidates(code))
+            {
+                if (!string.IsNullOrWhiteSpace(candidate))
+                {
+                    set.Add(candidate);
+                }
+            }
+        }
+
+        foreach (var bundleCode in HelixQacBundleCodes)
+        {
+            set.Add(bundleCode);
+        }
+
+        return set.ToList();
+    }
+
+    private void RestoreMemoLearnedSynonymsFromSettings()
+    {
+        var source = Settings.MemoLearnedSynonyms ?? new Dictionary<string, List<string>>();
+        var normalized = new Dictionary<string, List<string>>(StringComparer.OrdinalIgnoreCase);
+        foreach (var pair in source)
+        {
+            var term = (pair.Key ?? string.Empty).Trim();
+            if (string.IsNullOrWhiteSpace(term))
+            {
+                continue;
+            }
+
+            var codes = (pair.Value ?? new List<string>())
+                .Where(value => !string.IsNullOrWhiteSpace(value))
+                .Select(value => value.Trim())
+                .Distinct(StringComparer.OrdinalIgnoreCase)
+                .ToList();
+            if (codes.Count == 0)
+            {
+                continue;
+            }
+
+            normalized[term] = codes;
+            foreach (var code in codes)
+            {
+                AddSynonymAlias(_synonyms, term, code);
+            }
+        }
+
+        Settings.MemoLearnedSynonyms = normalized;
+    }
+
+    private void LoadMemoUnresolvedHistoryFromSettings()
+    {
+        var history = (Settings.MemoUnresolvedHistory ?? new List<string>())
+            .Where(value => !string.IsNullOrWhiteSpace(value))
+            .Select(value => value.Trim())
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .Take(MemoUnresolvedHistoryLimit)
+            .ToList();
+
+        Settings.MemoUnresolvedHistory = history;
+        MemoUnresolvedHistoryItems.Clear();
+        foreach (var item in history)
+        {
+            MemoUnresolvedHistoryItems.Add(item);
+        }
+    }
+
+    private void SaveUnresolvedTermsToHistory(IEnumerable<string> terms)
+    {
+        var merged = (Settings.MemoUnresolvedHistory ?? new List<string>())
+            .Where(value => !string.IsNullOrWhiteSpace(value))
+            .Select(value => value.Trim())
+            .ToList();
+        var original = merged.ToList();
+        var changed = false;
+
+        foreach (var term in terms
+                     .Where(value => !string.IsNullOrWhiteSpace(value))
+                     .Select(value => value.Trim()))
+        {
+            merged.RemoveAll(value => value.Equals(term, StringComparison.OrdinalIgnoreCase));
+            merged.Insert(0, term);
+            changed = true;
+        }
+
+        if (!changed)
+        {
+            return;
+        }
+
+        if (merged.Count > MemoUnresolvedHistoryLimit)
+        {
+            merged.RemoveRange(MemoUnresolvedHistoryLimit, merged.Count - MemoUnresolvedHistoryLimit);
+        }
+
+        if (!changed ||
+            (original.Count == merged.Count &&
+             original.SequenceEqual(merged, StringComparer.OrdinalIgnoreCase)))
+        {
+            return;
+        }
+
+        Settings.MemoUnresolvedHistory = merged;
+        _settingsService.Save(Settings);
+        LoadMemoUnresolvedHistoryFromSettings();
+    }
+
+    private void LearnMemoSynonym(string term, string code)
+    {
+        var normalizedTerm = (term ?? string.Empty).Trim();
+        var normalizedCode = NormalizeModuleCode(code ?? string.Empty);
+        if (string.IsNullOrWhiteSpace(normalizedTerm) || string.IsNullOrWhiteSpace(normalizedCode))
+        {
+            return;
+        }
+
+        AddSynonymAlias(_synonyms, normalizedTerm, normalizedCode);
+
+        Settings.MemoLearnedSynonyms ??= new Dictionary<string, List<string>>(StringComparer.OrdinalIgnoreCase);
+        if (!Settings.MemoLearnedSynonyms.TryGetValue(normalizedTerm, out var list))
+        {
+            list = new List<string>();
+            Settings.MemoLearnedSynonyms[normalizedTerm] = list;
+        }
+
+        if (list.Any(existing => existing.Equals(normalizedCode, StringComparison.OrdinalIgnoreCase)))
+        {
+            return;
+        }
+
+        list.Add(normalizedCode);
+        _settingsService.Save(Settings);
+    }
+
+    private void TryAutoFillCompanyNameFromMemo(string? text)
+    {
+        var candidate = ExtractCompanyNameFromMemo(text ?? string.Empty);
+        if (string.IsNullOrWhiteSpace(candidate))
+        {
+            return;
+        }
+
+        var current = CompanyName?.Trim() ?? string.Empty;
+        if (!string.IsNullOrWhiteSpace(current))
+        {
+            var canReplace = _isCompanyNameAutoFilled || ShouldReplaceExistingCompanyName(current, candidate);
+            if (!canReplace || current.Equals(candidate, StringComparison.Ordinal))
+            {
+                return;
+            }
+        }
+
+        _isSettingCompanyNameFromMemo = true;
+        try
+        {
+            CompanyName = candidate;
+            _isCompanyNameAutoFilled = true;
+        }
+        finally
+        {
+            _isSettingCompanyNameFromMemo = false;
+        }
+    }
+
+    private bool TryApplyCompanyNameFromLlm(string? candidate)
+    {
+        var cleaned = CleanCompanyNameCandidate(candidate ?? string.Empty);
+        if (string.IsNullOrWhiteSpace(cleaned))
+        {
+            return false;
+        }
+
+        var current = CompanyName?.Trim() ?? string.Empty;
+        if (!string.IsNullOrWhiteSpace(current))
+        {
+            var canReplace = _isCompanyNameAutoFilled || ShouldReplaceExistingCompanyName(current, cleaned);
+            if (!canReplace || current.Equals(cleaned, StringComparison.Ordinal))
+            {
+                return false;
+            }
+        }
+
+        _isSettingCompanyNameFromMemo = true;
+        try
+        {
+            CompanyName = cleaned;
+            _isCompanyNameAutoFilled = true;
+            return true;
+        }
+        finally
+        {
+            _isSettingCompanyNameFromMemo = false;
+        }
+    }
+
+    private static string ExtractCompanyNameFromMemo(string text)
+    {
+        if (string.IsNullOrWhiteSpace(text))
+        {
+            return string.Empty;
+        }
+
+        text = GetMemoPrimarySegmentForAutoParse(text);
+
+        var lines = text.Split(new[] { "\r\n", "\n" }, StringSplitOptions.None)
+            .Select(line => line.Trim())
+            .ToList();
+        var addresseeCompanies = ExtractAddresseeCompanyCandidates(lines);
+
+        var signatureCandidate = ExtractCompanyFromSignature(lines, addresseeCompanies);
+        if (!string.IsNullOrWhiteSpace(signatureCandidate))
+        {
+            return signatureCandidate;
+        }
+
+        var selfIntroCandidate = ExtractCompanyFromSelfIntroduction(lines, addresseeCompanies);
+        if (!string.IsNullOrWhiteSpace(selfIntroCandidate))
+        {
+            return selfIntroCandidate;
+        }
+
+        foreach (var trimmed in lines.Where(line => line.Length > 0))
+        {
+            var labelMatch = CompanyLabelRegex.Match(trimmed);
+            if (labelMatch.Success)
+            {
+                var value = CleanCompanyNameCandidate(labelMatch.Groups["name"].Value);
+                if (!string.IsNullOrWhiteSpace(value) && !ContainsCompanyCandidate(addresseeCompanies, value))
+                {
+                    return value;
+                }
+            }
+
+            var honorificMatch = CompanyHonorificRegex.Match(trimmed);
+            if (honorificMatch.Success)
+            {
+                var value = CleanCompanyNameCandidate(honorificMatch.Groups["name"].Value);
+                if (!string.IsNullOrWhiteSpace(value) &&
+                    ContainsCompanyMarker(value) &&
+                    !ContainsCompanyCandidate(addresseeCompanies, value))
+                {
+                    return value;
+                }
+            }
+
+            var keywordMatch = CompanyKeywordRegex.Match(trimmed);
+            if (keywordMatch.Success)
+            {
+                var value = CleanCompanyNameCandidate(keywordMatch.Groups["name"].Value);
+                if (!string.IsNullOrWhiteSpace(value) &&
+                    ContainsCompanyMarker(value) &&
+                    !ContainsCompanyCandidate(addresseeCompanies, value))
+                {
+                    return value;
+                }
+            }
+
+            var inlineValue = TryExtractCompanyFromLine(trimmed, strict: true);
+            if (!string.IsNullOrWhiteSpace(inlineValue) && !ContainsCompanyCandidate(addresseeCompanies, inlineValue))
+            {
+                return inlineValue;
+            }
+        }
+
+        return string.Empty;
+    }
+
+    private static string ExtractCompanyFromSignature(
+        IReadOnlyList<string> lines,
+        ISet<string> addresseeCompanies)
+    {
+        if (lines.Count == 0)
+        {
+            return string.Empty;
+        }
+
+        var signatureStart = -1;
+        var nonEmptyBefore = 0;
+        for (var i = 0; i < lines.Count; i++)
+        {
+            var line = lines[i]?.Trim() ?? string.Empty;
+            if (line.Length == 0)
+            {
+                continue;
+            }
+
+            nonEmptyBefore++;
+            if (SignatureSeparatorRegex.IsMatch(line))
+            {
+                // Prefer the first separator in the latest (top) message block.
+                if (nonEmptyBefore >= 3)
+                {
+                    signatureStart = i + 1;
+                    break;
+                }
+            }
+
+            if (IsQuotedMessageStartLine(line) && nonEmptyBefore > 3)
+            {
+                break;
+            }
+        }
+
+        IEnumerable<string> targetLines;
+        if (signatureStart >= 0 && signatureStart < lines.Count)
+        {
+            var signatureEnd = lines.Count;
+            for (var i = signatureStart; i < lines.Count; i++)
+            {
+                var line = lines[i]?.Trim() ?? string.Empty;
+                if (line.Length == 0)
+                {
+                    continue;
+                }
+
+                if (SignatureSeparatorRegex.IsMatch(line))
+                {
+                    signatureEnd = i;
+                    break;
+                }
+
+                if (IsQuotedMessageStartLine(line) && i > signatureStart + 1)
+                {
+                    signatureEnd = i;
+                    break;
+                }
+            }
+
+            targetLines = lines.Skip(signatureStart).Take(Math.Max(0, signatureEnd - signatureStart));
+        }
+        else
+        {
+            targetLines = lines.Skip(Math.Max(0, lines.Count - 12));
+        }
+
+        foreach (var line in targetLines)
+        {
+            var value = TryExtractCompanyFromLine(line, strict: false);
+            if (!string.IsNullOrWhiteSpace(value) && !ContainsCompanyCandidate(addresseeCompanies, value))
+            {
+                return value;
+            }
+        }
+
+        return string.Empty;
+    }
+
+    private static HashSet<string> ExtractAddresseeCompanyCandidates(IReadOnlyList<string> lines)
+    {
+        var result = new HashSet<string>(StringComparer.Ordinal);
+        if (lines.Count < 2)
+        {
+            return result;
+        }
+
+        for (var i = 0; i < lines.Count - 1; i++)
+        {
+            var current = (lines[i] ?? string.Empty).Trim();
+            var next = (lines[i + 1] ?? string.Empty).Trim();
+            if (current.Length == 0 || next.Length == 0)
+            {
+                continue;
+            }
+
+            if (!AddresseeLineRegex.IsMatch(next))
+            {
+                continue;
+            }
+
+            var company = CleanCompanyNameCandidate(current);
+            if (company.Length == 0)
+            {
+                continue;
+            }
+
+            if (ContainsCompanyMarker(company) || company.Length <= 40)
+            {
+                result.Add(company);
+            }
+        }
+
+        return result;
+    }
+
+    private static string ExtractCompanyFromSelfIntroduction(
+        IReadOnlyList<string> lines,
+        ISet<string> addresseeCompanies)
+    {
+        foreach (var raw in lines)
+        {
+            var line = (raw ?? string.Empty).Trim();
+            if (line.Length == 0)
+            {
+                continue;
+            }
+
+            var candidate = TryExtractCompanyFromSelfIntroductionLine(line);
+            if (string.IsNullOrWhiteSpace(candidate))
+            {
+                continue;
+            }
+
+            if (ContainsCompanyCandidate(addresseeCompanies, candidate))
+            {
+                continue;
+            }
+
+            return candidate;
+        }
+
+        return string.Empty;
+    }
+
+    private static string TryExtractCompanyFromSelfIntroductionLine(string line)
+    {
+        var trimmed = (line ?? string.Empty).Trim();
+        if (trimmed.Length == 0)
+        {
+            return string.Empty;
+        }
+
+        if (!SelfIntroPhraseRegex.IsMatch(trimmed))
+        {
+            return string.Empty;
+        }
+
+        if (trimmed.Contains("http", StringComparison.OrdinalIgnoreCase) ||
+            trimmed.Contains("www.", StringComparison.OrdinalIgnoreCase) ||
+            trimmed.Contains("@", StringComparison.Ordinal))
+        {
+            return string.Empty;
+        }
+
+        var withNoSuffix = IntroSuffixRegex.Replace(trimmed, string.Empty).Trim();
+        if (!string.IsNullOrWhiteSpace(withNoSuffix) && ContainsCompanyMarker(withNoSuffix))
+        {
+            return CleanCompanyNameCandidate(withNoSuffix);
+        }
+
+        var selfIntroMatch = SelfIntroCompanyRegex.Match(trimmed);
+        if (selfIntroMatch.Success)
+        {
+            var candidate = CleanCompanyNameCandidate(selfIntroMatch.Groups["name"].Value);
+            if (IsLikelyCompanyToken(candidate))
+            {
+                return candidate;
+            }
+        }
+
+        return string.Empty;
+    }
+
+    private static string TryExtractCompanyFromLine(string line, bool strict)
+    {
+        var trimmed = (line ?? string.Empty).Trim();
+        if (trimmed.Length == 0)
+        {
+            return string.Empty;
+        }
+
+        if (trimmed.Contains("http", StringComparison.OrdinalIgnoreCase) ||
+            trimmed.Contains("www.", StringComparison.OrdinalIgnoreCase) ||
+            trimmed.Contains("@", StringComparison.Ordinal) ||
+            trimmed.Contains("TEL", StringComparison.OrdinalIgnoreCase) ||
+            trimmed.Contains("電話", StringComparison.Ordinal))
+        {
+            return string.Empty;
+        }
+
+        var match = CompanyInlineRegex.Match(trimmed);
+        if (!match.Success)
+        {
+            return string.Empty;
+        }
+
+        var candidate = CleanCompanyNameCandidate(match.Groups["name"].Value);
+        if (string.IsNullOrWhiteSpace(candidate) || !ContainsCompanyMarker(candidate))
+        {
+            return string.Empty;
+        }
+
+        if (strict && IsLikelyPersonSentence(trimmed))
+        {
+            return string.Empty;
+        }
+
+        return candidate;
+    }
+
+    private static bool IsLikelyCompanyToken(string value)
+    {
+        if (string.IsNullOrWhiteSpace(value))
+        {
+            return false;
+        }
+
+        if (value.Length < 2 || value.Length > 40)
+        {
+            return false;
+        }
+
+        if (value.Contains("様", StringComparison.Ordinal) ||
+            value.Contains("御中", StringComparison.Ordinal) ||
+            value.Contains("部", StringComparison.Ordinal) ||
+            value.Contains("課", StringComparison.Ordinal) ||
+            value.Contains("担当", StringComparison.Ordinal))
+        {
+            return false;
+        }
+
+        return true;
+    }
+
+    private static bool IsLikelyPersonSentence(string value)
+    {
+        if (string.IsNullOrWhiteSpace(value))
+        {
+            return false;
+        }
+
+        return value.Contains("です", StringComparison.Ordinal) ||
+               value.Contains("ます", StringComparison.Ordinal) ||
+               value.Contains("と申します", StringComparison.Ordinal) ||
+               value.Contains("担当", StringComparison.Ordinal);
+    }
+
+    private static bool ShouldReplaceExistingCompanyName(string current, string candidate)
+    {
+        if (string.IsNullOrWhiteSpace(current))
+        {
+            return true;
+        }
+
+        if (string.IsNullOrWhiteSpace(candidate))
+        {
+            return false;
+        }
+
+        if (!ContainsCompanyMarker(current) && ContainsCompanyMarker(candidate))
+        {
+            return true;
+        }
+
+        if (IsLikelyPersonSentence(current) && !IsLikelyPersonSentence(candidate))
+        {
+            return true;
+        }
+
+        if (current.Contains(candidate, StringComparison.Ordinal) && current.Length > candidate.Length)
+        {
+            return true;
+        }
+
+        return false;
+    }
+
+    private static bool ContainsCompanyCandidate(ISet<string> candidates, string value)
+    {
+        if (candidates.Count == 0 || string.IsNullOrWhiteSpace(value))
+        {
+            return false;
+        }
+
+        foreach (var candidate in candidates)
+        {
+            if (IsSameCompanyName(candidate, value))
+            {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    private static bool IsSameCompanyName(string left, string right)
+    {
+        if (string.IsNullOrWhiteSpace(left) || string.IsNullOrWhiteSpace(right))
+        {
+            return false;
+        }
+
+        var normalizedLeft = NormalizeCompanyComparisonKey(left);
+        var normalizedRight = NormalizeCompanyComparisonKey(right);
+        if (normalizedLeft.Length == 0 || normalizedRight.Length == 0)
+        {
+            return false;
+        }
+
+        return normalizedLeft.Equals(normalizedRight, StringComparison.OrdinalIgnoreCase);
+    }
+
+    private static string NormalizeCompanyComparisonKey(string value)
+    {
+        if (string.IsNullOrWhiteSpace(value))
+        {
+            return string.Empty;
+        }
+
+        var normalized = CleanCompanyNameCandidate(value);
+        normalized = normalized
+            .Replace("（株）", "株式会社", StringComparison.Ordinal)
+            .Replace("(株)", "株式会社", StringComparison.OrdinalIgnoreCase)
+            .Replace("㈱", "株式会社", StringComparison.Ordinal)
+            .Replace("（有）", "有限会社", StringComparison.Ordinal)
+            .Replace("(有)", "有限会社", StringComparison.OrdinalIgnoreCase)
+            .Replace("㈲", "有限会社", StringComparison.Ordinal)
+            .Replace("（同）", "合同会社", StringComparison.Ordinal)
+            .Replace("(同)", "合同会社", StringComparison.OrdinalIgnoreCase)
+            .Replace("　", string.Empty, StringComparison.Ordinal)
+            .Replace(" ", string.Empty, StringComparison.Ordinal);
+
+        normalized = normalized
+            .Replace("株式会社", string.Empty, StringComparison.Ordinal)
+            .Replace("有限会社", string.Empty, StringComparison.Ordinal)
+            .Replace("合同会社", string.Empty, StringComparison.Ordinal)
+            .Replace(".", string.Empty, StringComparison.Ordinal)
+            .Replace("・", string.Empty, StringComparison.Ordinal)
+            .Replace(",", string.Empty, StringComparison.Ordinal)
+            .Replace("，", string.Empty, StringComparison.Ordinal)
+            .Replace("。", string.Empty, StringComparison.Ordinal)
+            .Replace(":", string.Empty, StringComparison.Ordinal)
+            .Replace("：", string.Empty, StringComparison.Ordinal)
+            .Trim();
+
+        return normalized;
+    }
+
+    private static bool ContainsCompanyMarker(string value)
+    {
+        if (string.IsNullOrWhiteSpace(value))
+        {
+            return false;
+        }
+
+        return value.Contains("株式会社", StringComparison.Ordinal) ||
+               value.Contains("有限会社", StringComparison.Ordinal) ||
+               value.Contains("合同会社", StringComparison.Ordinal);
+    }
+
+    private static string CleanCompanyNameCandidate(string value)
+    {
+        if (string.IsNullOrWhiteSpace(value))
+        {
+            return string.Empty;
+        }
+
+        var normalized = value
+            .Replace("御中", string.Empty, StringComparison.Ordinal)
+            .Replace("様", string.Empty, StringComparison.Ordinal)
+            .Replace("（株）", "株式会社", StringComparison.Ordinal)
+            .Replace("(株)", "株式会社", StringComparison.OrdinalIgnoreCase)
+            .Replace("㈱", "株式会社", StringComparison.Ordinal)
+            .Replace("（有）", "有限会社", StringComparison.Ordinal)
+            .Replace("(有)", "有限会社", StringComparison.OrdinalIgnoreCase)
+            .Replace("㈲", "有限会社", StringComparison.Ordinal)
+            .Replace("（同）", "合同会社", StringComparison.Ordinal)
+            .Replace("(同)", "合同会社", StringComparison.OrdinalIgnoreCase)
+            .Replace("　", " ", StringComparison.Ordinal)
+            .Trim();
+        normalized = IntroSuffixRegex.Replace(normalized, string.Empty);
+        normalized = normalized.Trim('\"', '\'', '「', '」', '【', '】', '[', ']', '(', ')');
+        normalized = normalized.TrimEnd('。', '、', ',', '.', '・', ':', '：', ';');
+        if (normalized.Length > 80)
+        {
+            normalized = normalized[..80].Trim();
+        }
+
+        return normalized;
+    }
+
+    private static string MergeDistinctMemoLines(string baseText, IReadOnlyCollection<string> additionalLines)
+    {
+        if (additionalLines.Count == 0)
+        {
+            return baseText;
+        }
+
+        var existing = new HashSet<string>(
+            (baseText ?? string.Empty)
+            .Split(new[] { "\r\n", "\n" }, StringSplitOptions.RemoveEmptyEntries)
+            .Select(line => line.Trim())
+            .Where(line => line.Length > 0),
+            StringComparer.OrdinalIgnoreCase);
+
+        var builder = new StringBuilder(baseText ?? string.Empty);
+        foreach (var line in additionalLines)
+        {
+            var trimmed = line.Trim();
+            if (trimmed.Length == 0 || !existing.Add(trimmed))
+            {
+                continue;
+            }
+
+            if (builder.Length > 0 &&
+                builder[^1] != '\n' &&
+                builder[^1] != '\r')
+            {
+                builder.AppendLine();
+            }
+
+            builder.Append(trimmed);
+        }
+
+        return builder.ToString();
     }
 
     [RelayCommand]
@@ -3203,6 +4279,7 @@ public partial class MainViewModel : ObservableObject
             QuickRequestResult = string.Empty;
             UnresolvedTerms.Clear();
             AmbiguousTerms.Clear();
+            UnresolvedMemoText = string.Empty;
             UpdateBasket();
             PersistCustomState();
             _settingsService.Save(Settings);
@@ -3505,6 +4582,7 @@ public partial class MainViewModel : ObservableObject
             QuickRequestResult = string.Empty;
             UnresolvedTerms.Clear();
             AmbiguousTerms.Clear();
+            UnresolvedMemoText = string.Empty;
 
             if (!string.IsNullOrWhiteSpace(entry.SelectedVersion))
             {
@@ -3613,6 +4691,7 @@ public partial class MainViewModel : ObservableObject
             ClearManualPicks();
             UnresolvedTerms.Clear();
             AmbiguousTerms.Clear();
+            UnresolvedMemoText = string.Empty;
             QuickRequestResult = string.Empty;
 
             if (clearContextInputs)
@@ -4529,6 +5608,16 @@ public partial class MainViewModel : ObservableObject
     private static bool IsHelixQacBundleCode(string code)
     {
         return HelixQacBundleCodes.Contains(code);
+    }
+
+    private static bool RequiresStrictVersionMatch(string code)
+    {
+        if (string.IsNullOrWhiteSpace(code))
+        {
+            return false;
+        }
+
+        return IsHelixQacBundleCode(NormalizeModuleCode(code));
     }
 
     private static string GetSelectionTargetCode(string code)
@@ -5992,13 +7081,14 @@ public partial class MainViewModel : ObservableObject
             return requests;
         }
 
-        var codes = knownCodes
-            .Where(code => !string.IsNullOrWhiteSpace(code))
-            .OrderByDescending(code => code.Length)
-            .ToList();
-        var seen = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        var targets = BuildVersionRequestTargets(knownCodes);
+        if (targets.Count == 0)
+        {
+            return requests;
+        }
 
         var lines = text.Split(new[] { "\r\n", "\n" }, StringSplitOptions.RemoveEmptyEntries);
+        var seen = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
         var requestIndex = new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase);
         foreach (var line in lines)
         {
@@ -6010,41 +7100,159 @@ public partial class MainViewModel : ObservableObject
 
             var normalizedLine = trimmed.Normalize(NormalizationForm.FormKC);
             var requestedOs = GetRequestedOsFromText(normalizedLine);
-            foreach (var code in codes)
+            foreach (var target in targets)
             {
-                var index = normalizedLine.IndexOf(code, StringComparison.OrdinalIgnoreCase);
-                if (index < 0)
+                var searchStart = 0;
+                while (searchStart < normalizedLine.Length)
                 {
-                    continue;
-                }
-
-                var match = VersionRegex.Match(normalizedLine, index + code.Length);
-                if (!match.Success)
-                {
-                    continue;
-                }
-
-                var version = match.Value;
-                var key = $"{code}|{version}";
-                if (!seen.Add(key))
-                {
-                    if (requestIndex.TryGetValue(key, out var existingIndex))
+                    var index = normalizedLine.IndexOf(target.Token, searchStart, StringComparison.OrdinalIgnoreCase);
+                    if (index < 0)
                     {
-                        var existing = requests[existingIndex];
-                        var merged = MergeRequestedOs(existing.OsSelection, requestedOs);
-                        requests[existingIndex] = existing with { OsSelection = merged };
+                        break;
                     }
-                    break;
+
+                    var versionStart = index + target.Token.Length;
+                    var allowsAttachedVersion =
+                        versionStart < normalizedLine.Length &&
+                        char.IsDigit(normalizedLine[versionStart]);
+                    if (!IsVersionTargetBoundary(normalizedLine, index, target.Token.Length) && !allowsAttachedVersion)
+                    {
+                        searchStart = index + target.Token.Length;
+                        continue;
+                    }
+
+                    var match = VersionRegex.Match(normalizedLine, versionStart);
+                    if (match.Success)
+                    {
+                        var version = match.Value;
+                        var requestCode = NormalizeVersionRequestCode(
+                            normalizedLine,
+                            target.CanonicalCode,
+                            index,
+                            target.Token.Length,
+                            version);
+                        var key = $"{requestCode}|{version}";
+                        if (!seen.Add(key))
+                        {
+                            if (requestIndex.TryGetValue(key, out var existingIndex))
+                            {
+                                var existing = requests[existingIndex];
+                                var merged = MergeRequestedOs(existing.OsSelection, requestedOs);
+                                requests[existingIndex] = existing with { OsSelection = merged };
+                            }
+                        }
+                        else
+                        {
+                            requestIndex[key] = requests.Count;
+                            requests.Add(new VersionedRequest(requestCode, version, requestedOs));
+                        }
+                    }
+
+                    searchStart = index + target.Token.Length;
                 }
-
-                requestIndex[key] = requests.Count;
-                requests.Add(new VersionedRequest(code, version, requestedOs));
-
-                break;
             }
         }
 
         return requests;
+    }
+
+    private static List<VersionRequestTarget> BuildVersionRequestTargets(IReadOnlyCollection<string> knownCodes)
+    {
+        var targets = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+
+        static void AddTarget(IDictionary<string, string> map, string token, string canonicalCode)
+        {
+            if (string.IsNullOrWhiteSpace(token) || string.IsNullOrWhiteSpace(canonicalCode))
+            {
+                return;
+            }
+
+            var trimmedToken = token.Trim();
+            var trimmedCode = canonicalCode.Trim();
+            if (trimmedToken.Length == 0 || trimmedCode.Length == 0)
+            {
+                return;
+            }
+
+            map[trimmedToken] = trimmedCode;
+        }
+
+        foreach (var code in knownCodes.Where(value => !string.IsNullOrWhiteSpace(value)))
+        {
+            var normalizedCode = NormalizeModuleCode(code);
+            AddTarget(targets, code, normalizedCode);
+            foreach (var candidate in GetModuleCodeCandidates(code))
+            {
+                AddTarget(targets, candidate, normalizedCode);
+            }
+
+            if (!IsHelixQacBundleCode(normalizedCode))
+            {
+                continue;
+            }
+
+            AddTarget(targets, HelixQacCode, HelixQacCode);
+            AddTarget(targets, "Helix", "Helix");
+            AddTarget(targets, "QAC", "QAC");
+            AddTarget(targets, "QAC++", "QAC++");
+            AddTarget(targets, "QACPP", "QACPP");
+        }
+
+        return targets
+            .Select(pair => new VersionRequestTarget(pair.Key, pair.Value))
+            .OrderByDescending(item => item.Token.Length)
+            .ToList();
+    }
+
+    private static bool IsVersionTargetBoundary(string text, int startIndex, int length)
+    {
+        if (startIndex > 0)
+        {
+            var before = text[startIndex - 1];
+            if (IsAsciiModuleTokenChar(before))
+            {
+                return false;
+            }
+        }
+
+        var afterIndex = startIndex + length;
+        if (afterIndex < text.Length)
+        {
+            var after = text[afterIndex];
+            if (IsAsciiModuleTokenChar(after))
+            {
+                return false;
+            }
+        }
+
+        return true;
+    }
+
+    private static bool IsAsciiModuleTokenChar(char ch)
+    {
+        return (ch >= 'A' && ch <= 'Z')
+               || (ch >= 'a' && ch <= 'z')
+               || (ch >= '0' && ch <= '9')
+               || ch == '+'
+               || ch == '_';
+    }
+
+    private static string NormalizeVersionRequestCode(
+        string line,
+        string canonicalCode,
+        int tokenStartIndex,
+        int tokenLength,
+        string version)
+    {
+        // "Helix QAC 2021.3" のような表現は Helix版数指定として統一する。
+        if (IsLikelyHelixVersionToken(version) &&
+            HasHelixKeywordNearToken(line, tokenStartIndex, tokenLength) &&
+            IsHelixQacBundleCode(canonicalCode))
+        {
+            return "Helix";
+        }
+
+        return canonicalCode;
     }
 
     private bool SelectAcrossTabsByVersion(
@@ -6136,6 +7344,131 @@ public partial class MainViewModel : ObservableObject
         return null;
     }
 
+    private bool IsLocalLlmDecisionEnabled()
+    {
+        return string.Equals(Settings.AiDecisionMode, AiModeLocalLlm, StringComparison.OrdinalIgnoreCase);
+    }
+
+    private bool ShouldRunLocalLlm(
+        IReadOnlyCollection<VersionedRequest> versionedRequests,
+        RequestedOs defaultRequestedOs,
+        string? companyName)
+    {
+        if (!IsLocalLlmDecisionEnabled())
+        {
+            return false;
+        }
+
+        var hasCompany = !string.IsNullOrWhiteSpace(companyName);
+        var hasVersionedRequests = versionedRequests.Count > 0;
+        var hasRequestedOs = defaultRequestedOs != RequestedOs.Unspecified;
+        return !hasCompany || !hasVersionedRequests || !hasRequestedOs;
+    }
+
+    private static RequestedOs ParseRequestedOsToken(string? os)
+    {
+        var value = (os ?? string.Empty).Trim();
+        if (string.IsNullOrWhiteSpace(value))
+        {
+            return RequestedOs.Unspecified;
+        }
+
+        if (value.Equals("Windows", StringComparison.OrdinalIgnoreCase) ||
+            value.Equals("Win", StringComparison.OrdinalIgnoreCase) ||
+            value.Equals("Windows版", StringComparison.OrdinalIgnoreCase))
+        {
+            return RequestedOs.Windows;
+        }
+
+        if (value.Equals("Linux", StringComparison.OrdinalIgnoreCase) ||
+            value.Equals("Lin", StringComparison.OrdinalIgnoreCase) ||
+            value.Equals("Linux版", StringComparison.OrdinalIgnoreCase))
+        {
+            return RequestedOs.Linux;
+        }
+
+        if (value.Equals("Both", StringComparison.OrdinalIgnoreCase) ||
+            value.Equals("両方", StringComparison.OrdinalIgnoreCase))
+        {
+            return RequestedOs.Both;
+        }
+
+        return RequestedOs.Unspecified;
+    }
+
+    private static string ResolveKnownCodeCandidate(string? rawCode, IReadOnlyCollection<string> knownCodes)
+    {
+        var source = (rawCode ?? string.Empty).Trim();
+        if (string.IsNullOrWhiteSpace(source))
+        {
+            return string.Empty;
+        }
+
+        var normalizedSource = NormalizeCodeLookupKey(source);
+        if (normalizedSource.Length == 0)
+        {
+            return string.Empty;
+        }
+
+        string? bestCode = null;
+        var bestLength = 0;
+        foreach (var candidate in knownCodes.Where(value => !string.IsNullOrWhiteSpace(value)))
+        {
+            var normalizedCandidate = NormalizeCodeLookupKey(candidate);
+            if (normalizedCandidate.Length == 0)
+            {
+                continue;
+            }
+
+            if (normalizedSource.Equals(normalizedCandidate, StringComparison.OrdinalIgnoreCase))
+            {
+                return NormalizeModuleCode(candidate);
+            }
+
+            if (normalizedSource.Contains(normalizedCandidate, StringComparison.OrdinalIgnoreCase))
+            {
+                if (normalizedCandidate.Length > bestLength)
+                {
+                    bestCode = candidate;
+                    bestLength = normalizedCandidate.Length;
+                }
+            }
+        }
+
+        return bestCode == null ? string.Empty : NormalizeModuleCode(bestCode);
+    }
+
+    private static string NormalizeCodeLookupKey(string value)
+    {
+        if (string.IsNullOrWhiteSpace(value))
+        {
+            return string.Empty;
+        }
+
+        var normalized = value.Normalize(NormalizationForm.FormKC);
+        var builder = new StringBuilder(normalized.Length);
+        foreach (var ch in normalized)
+        {
+            if (char.IsLetterOrDigit(ch) || ch == '+')
+            {
+                builder.Append(char.ToUpperInvariant(ch));
+            }
+        }
+
+        return builder.ToString();
+    }
+
+    private static List<string> ExtractRequestedVersionTokens(string? value)
+    {
+        var normalized = (value ?? string.Empty).Normalize(NormalizationForm.FormKC);
+        var versions = VersionRegex.Matches(normalized)
+            .Select(match => match.Value.Trim())
+            .Where(token => !string.IsNullOrWhiteSpace(token))
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .ToList();
+        return versions;
+    }
+
     private static RequestedOs GetRequestedOsFromText(string text)
     {
         if (string.IsNullOrWhiteSpace(text))
@@ -6143,26 +7476,344 @@ public partial class MainViewModel : ObservableObject
             return RequestedOs.Unspecified;
         }
 
-        var normalized = text.Normalize(NormalizationForm.FormKC).ToLowerInvariant();
-        var hasWindows = normalized.Contains(OsTokenWindows) || normalized.Contains("win");
-        var hasLinux = normalized.Contains(OsTokenLinux);
+        var normalized = text.Normalize(NormalizationForm.FormKC);
+        var lines = normalized.Split(new[] { "\r\n", "\n" }, StringSplitOptions.None);
+        var windowsScore = 0;
+        var linuxScore = 0;
+        var bothScore = 0;
+        var lastSingleOsHint = RequestedOs.Unspecified;
+        var hasExplicitWindowsRequest = false;
+        var hasExplicitLinuxRequest = false;
 
-        if (hasWindows && hasLinux)
+        foreach (var rawLine in lines)
         {
-            return RequestedOs.Both;
+            var line = (rawLine ?? string.Empty).Trim();
+            if (line.Length == 0)
+            {
+                continue;
+            }
+
+            if (IsIgnorableOsHeaderLine(line))
+            {
+                continue;
+            }
+
+            var hasWindows = WindowsTokenRegex.IsMatch(line);
+            var hasLinux = LinuxTokenRegex.IsMatch(line);
+            if (!hasWindows && !hasLinux)
+            {
+                continue;
+            }
+
+            var isQuestionLike = IsQuestionLikeOsLine(line);
+            var isRequestLike = IsOsRequestLine(line);
+            if (hasWindows && hasLinux)
+            {
+                if (isQuestionLike)
+                {
+                    // "Windows/Linux どちらでしょうか" は指定ではなく質問として扱う
+                    continue;
+                }
+
+                if (IsBothOsIntentLine(line))
+                {
+                    bothScore += 3;
+                }
+                else
+                {
+                    bothScore += 1;
+                }
+
+                continue;
+            }
+
+            // "Windows版でしょうか" のような問い合わせ文は指定として扱わない。
+            if (isQuestionLike && !isRequestLike)
+            {
+                continue;
+            }
+
+            if (hasWindows)
+            {
+                windowsScore += isRequestLike ? 4 : 2;
+                lastSingleOsHint = RequestedOs.Windows;
+                if (isRequestLike)
+                {
+                    hasExplicitWindowsRequest = true;
+                }
+            }
+            else if (hasLinux)
+            {
+                linuxScore += isRequestLike ? 4 : 2;
+                lastSingleOsHint = RequestedOs.Linux;
+                if (isRequestLike)
+                {
+                    hasExplicitLinuxRequest = true;
+                }
+            }
         }
 
-        if (hasWindows)
+        if (hasExplicitWindowsRequest && !hasExplicitLinuxRequest)
         {
             return RequestedOs.Windows;
         }
 
-        if (hasLinux)
+        if (hasExplicitLinuxRequest && !hasExplicitWindowsRequest)
         {
             return RequestedOs.Linux;
         }
 
+        if (bothScore > 0 && windowsScore == 0 && linuxScore == 0)
+        {
+            return RequestedOs.Both;
+        }
+
+        if (windowsScore > linuxScore)
+        {
+            return RequestedOs.Windows;
+        }
+
+        if (linuxScore > windowsScore)
+        {
+            return RequestedOs.Linux;
+        }
+
+        if (windowsScore > 0 && windowsScore == linuxScore)
+        {
+            if (lastSingleOsHint != RequestedOs.Unspecified)
+            {
+                return lastSingleOsHint;
+            }
+
+            if (bothScore > 0)
+            {
+                return RequestedOs.Both;
+            }
+        }
+
+        if (bothScore > 0)
+        {
+            return RequestedOs.Both;
+        }
+
         return RequestedOs.Unspecified;
+    }
+
+    private static RequestedOs GetDefaultRequestedOsFromMemo(string text)
+    {
+        if (string.IsNullOrWhiteSpace(text))
+        {
+            return RequestedOs.Unspecified;
+        }
+
+        var primary = ExtractPrimaryMemoSegment(text);
+        var fromPrimary = GetRequestedOsFromText(primary);
+        if (fromPrimary != RequestedOs.Unspecified)
+        {
+            return fromPrimary;
+        }
+
+        return GetRequestedOsFromText(text);
+    }
+
+    private static string GetMemoPrimarySegmentForAutoParse(string text)
+    {
+        if (string.IsNullOrWhiteSpace(text))
+        {
+            return string.Empty;
+        }
+
+        var primary = ExtractPrimaryMemoSegment(text);
+        if (!string.IsNullOrWhiteSpace(primary))
+        {
+            return primary;
+        }
+
+        return text.Trim();
+    }
+
+    private static string ExtractPrimaryMemoSegment(string text)
+    {
+        if (string.IsNullOrWhiteSpace(text))
+        {
+            return string.Empty;
+        }
+
+        var lines = text.Split(new[] { "\r\n", "\n" }, StringSplitOptions.None);
+        var builder = new StringBuilder();
+        var seenContent = false;
+        var nonEmptyCount = 0;
+
+        foreach (var raw in lines)
+        {
+            var line = raw ?? string.Empty;
+            var trimmed = line.Trim();
+            if (!seenContent)
+            {
+                if (trimmed.Length == 0)
+                {
+                    continue;
+                }
+
+                seenContent = true;
+            }
+
+            if (trimmed.Length > 0)
+            {
+                nonEmptyCount++;
+            }
+
+            if (nonEmptyCount > 3 && IsQuotedMessageStartLine(trimmed))
+            {
+                break;
+            }
+
+            builder.AppendLine(line);
+        }
+
+        return builder.ToString().Trim();
+    }
+
+    private static bool IsQuotedMessageStartLine(string line)
+    {
+        if (string.IsNullOrWhiteSpace(line))
+        {
+            return false;
+        }
+
+        if (QuotedMessageStartRegex.IsMatch(line))
+        {
+            return true;
+        }
+
+        if (ReplyHeaderStartRegex.IsMatch(line))
+        {
+            return true;
+        }
+
+        if (QuotedLineRegex.IsMatch(line))
+        {
+            return true;
+        }
+
+        if (line.Contains("Original Message", StringComparison.OrdinalIgnoreCase))
+        {
+            return true;
+        }
+
+        if (line.StartsWith("--------------- Original Message", StringComparison.OrdinalIgnoreCase))
+        {
+            return true;
+        }
+
+        return false;
+    }
+
+    private static bool IsBothOsIntentLine(string line)
+    {
+        if (string.IsNullOrWhiteSpace(line))
+        {
+            return false;
+        }
+
+        if (OsBothIntentRegex.IsMatch(line))
+        {
+            return true;
+        }
+
+        return line.Contains("Windows/Linux", StringComparison.OrdinalIgnoreCase)
+               || line.Contains("Windows版/Linux版", StringComparison.OrdinalIgnoreCase);
+    }
+
+    private static bool IsQuestionLikeOsLine(string line)
+    {
+        if (string.IsNullOrWhiteSpace(line))
+        {
+            return false;
+        }
+
+        return OsQuestionRegex.IsMatch(line);
+    }
+
+    private static bool IsOsRequestLine(string line)
+    {
+        if (string.IsNullOrWhiteSpace(line))
+        {
+            return false;
+        }
+
+        return OsRequestRegex.IsMatch(line);
+    }
+
+    private static bool IsIgnorableOsHeaderLine(string line)
+    {
+        if (string.IsNullOrWhiteSpace(line))
+        {
+            return true;
+        }
+
+        if (IsQuotedMessageStartLine(line))
+        {
+            return true;
+        }
+
+        return line.StartsWith("Subject:", StringComparison.OrdinalIgnoreCase)
+               || line.StartsWith("件名:", StringComparison.OrdinalIgnoreCase)
+               || line.StartsWith("件名：", StringComparison.OrdinalIgnoreCase)
+               || line.StartsWith("[thread::", StringComparison.OrdinalIgnoreCase)
+               || line.StartsWith("thread::", StringComparison.OrdinalIgnoreCase);
+    }
+
+    private static List<string> CollectOsEvidenceLines(string text)
+    {
+        var result = new List<string>();
+        if (string.IsNullOrWhiteSpace(text))
+        {
+            return result;
+        }
+
+        foreach (var rawLine in text.Split(new[] { "\r\n", "\n" }, StringSplitOptions.RemoveEmptyEntries))
+        {
+            var line = (rawLine ?? string.Empty).Trim();
+            if (line.Length == 0 || IsIgnorableOsHeaderLine(line))
+            {
+                continue;
+            }
+
+            if (WindowsTokenRegex.IsMatch(line) || LinuxTokenRegex.IsMatch(line))
+            {
+                result.Add(line);
+            }
+        }
+
+        return result;
+    }
+
+    private static string BuildPreviewText(string text, int maxLength)
+    {
+        if (string.IsNullOrWhiteSpace(text))
+        {
+            return string.Empty;
+        }
+
+        var trimmed = text.Trim();
+        if (trimmed.Length <= maxLength)
+        {
+            return trimmed;
+        }
+
+        return trimmed[..Math.Max(1, maxLength)] + "...";
+    }
+
+    private static string FormatRequestedOs(RequestedOs requestedOs)
+    {
+        return requestedOs switch
+        {
+            RequestedOs.Windows => "Windows",
+            RequestedOs.Linux => "Linux",
+            RequestedOs.Both => "両方",
+            _ => "未指定"
+        };
     }
 
     private static RequestedOs MergeRequestedOs(RequestedOs existing, RequestedOs incoming)
@@ -6199,7 +7850,9 @@ public partial class MainViewModel : ObservableObject
         osRequests[module] = MergeRequestedOs(existing, requestedOs);
     }
 
-    private void ApplyQuickRequestOsSelection(Dictionary<ModuleRowViewModel, RequestedOs> osRequests)
+    private void ApplyQuickRequestOsSelection(
+        Dictionary<ModuleRowViewModel, RequestedOs> osRequests,
+        RequestedOs defaultRequestedOs)
     {
         if (HelixVersions.Count == 0)
         {
@@ -6210,7 +7863,12 @@ public partial class MainViewModel : ObservableObject
         {
             var requested = osRequests.TryGetValue(module, out var value)
                 ? value
-                : RequestedOs.Unspecified;
+                : defaultRequestedOs;
+            if (requested == RequestedOs.Unspecified)
+            {
+                requested = defaultRequestedOs;
+            }
+
             module.OsSelection = ResolveRequestedOsSelection(module, requested);
         }
     }
@@ -6258,6 +7916,12 @@ public partial class MainViewModel : ObservableObject
         foreach (Match match in VersionRegex.Matches(normalized))
         {
             var token = match.Value;
+            var looksLikeHelixVersion = IsLikelyHelixVersionToken(token);
+            if (!looksLikeHelixVersion && !HasHelixKeywordNearToken(normalized, match.Index, match.Length))
+            {
+                continue;
+            }
+
             var helix = FindHelixVersion(token);
             if (helix != null)
             {
@@ -6290,13 +7954,31 @@ public partial class MainViewModel : ObservableObject
 
     private HelixVersionViewModel? FindHelixVersion(string token)
     {
-        var exact = HelixVersions.FirstOrDefault(v => string.Equals(v.Version, token, StringComparison.OrdinalIgnoreCase));
+        var trimmed = token?.Trim() ?? string.Empty;
+        if (trimmed.Length == 0)
+        {
+            return null;
+        }
+
+        var exact = HelixVersions.FirstOrDefault(v => string.Equals(v.Version, trimmed, StringComparison.OrdinalIgnoreCase));
         if (exact != null)
         {
             return exact;
         }
 
-        return HelixVersions.FirstOrDefault(v => v.Version.Contains(token, StringComparison.OrdinalIgnoreCase));
+        if (TryBuildHelixVersionKey(trimmed, out var requestKey))
+        {
+            foreach (var helix in HelixVersions)
+            {
+                if (TryBuildHelixVersionKey(helix.Version, out var helixKey) &&
+                    helixKey.Equals(requestKey, StringComparison.OrdinalIgnoreCase))
+                {
+                    return helix;
+                }
+            }
+        }
+
+        return HelixVersions.FirstOrDefault(v => v.Version.Contains(trimmed, StringComparison.OrdinalIgnoreCase));
     }
 
     private static string GetBasketKey(string helixVersion, InstallerAsset asset)
@@ -6332,6 +8014,37 @@ public partial class MainViewModel : ObservableObject
         }
 
         return numbers[0] >= 2000;
+    }
+
+    private static bool TryBuildHelixVersionKey(string version, out string key)
+    {
+        key = string.Empty;
+        var numbers = ExtractVersionNumbers(version);
+        if (numbers.Count < 2 || numbers[0] < 2000)
+        {
+            return false;
+        }
+
+        key = $"{numbers[0]}.{numbers[1]}";
+        return true;
+    }
+
+    private static bool HasHelixKeywordNearToken(string text, int tokenStartIndex, int tokenLength)
+    {
+        if (string.IsNullOrWhiteSpace(text))
+        {
+            return false;
+        }
+
+        var start = Math.Max(0, tokenStartIndex - 24);
+        var end = Math.Min(text.Length, tokenStartIndex + tokenLength + 24);
+        if (end <= start)
+        {
+            return false;
+        }
+
+        var context = text[start..end];
+        return context.Contains("helix", StringComparison.OrdinalIgnoreCase);
     }
 
     private static int GetRequiredVersionMatchCount(string version)
@@ -6501,6 +8214,8 @@ public partial class MainViewModel : ObservableObject
         Both
     }
 
+    private sealed record VersionRequestTarget(string Token, string CanonicalCode);
+
     private sealed record VersionedRequest(string Code, string Version, RequestedOs OsSelection);
 
     private sealed record ManualPickEntry(
@@ -6583,6 +8298,14 @@ public partial class MainViewModel : ObservableObject
         }
     }
 
+    partial void OnMemoTextChanged(string value)
+    {
+        if (string.IsNullOrWhiteSpace(CompanyName))
+        {
+            TryAutoFillCompanyNameFromMemo(GetMemoPrimarySegmentForAutoParse(value));
+        }
+    }
+
     partial void OnSearchTextChanged(string value)
     {
         foreach (var helix in HelixVersions)
@@ -6617,6 +8340,11 @@ public partial class MainViewModel : ObservableObject
 
     partial void OnCompanyNameChanged(string value)
     {
+        if (!_isSettingCompanyNameFromMemo)
+        {
+            _isCompanyNameAutoFilled = false;
+        }
+
         _redownloadUnlockedDestinationPaths.Clear();
         OnPropertyChanged(nameof(OutputFolderPreview));
         ShipmentCompanyName = value?.Trim() ?? string.Empty;

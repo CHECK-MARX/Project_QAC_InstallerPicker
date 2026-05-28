@@ -1,4 +1,7 @@
 {
+  "AiDecisionMode": "Disabled",
+  "LocalLlmBasePath": "C:\\LLM",
+  "LocalLlmEndpoint": "http://127.0.0.1:11434",
   "ExcelPath": "",
   "UncRoot": "",
   "OutputBaseFolder": "",
@@ -8,6 +11,8 @@
   "CustomTabStates": [],
   "CustomZipPlans": [],
   "SelectionStateHistory": [],
+  "MemoLearnedSynonyms": {},
+  "MemoUnresolvedHistory": [],
   "BulkExcelTemplateOptions": {
     "IncludeBasicInfo": true,
     "IncludeModuleSelection": true,

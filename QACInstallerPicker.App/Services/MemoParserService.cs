@@ -11,6 +11,20 @@ namespace QACInstallerPicker.App.Services;
 public class MemoParserService
 {
     private sealed record SynonymEntry(string Term, List<string> Codes, string Normalized);
+    private static readonly string[] IgnoredHeaderPrefixes =
+    {
+        "From:",
+        "Sent:",
+        "To:",
+        "Cc:",
+        "Subject:",
+        "件名:",
+        "送信:",
+        "宛先:",
+        "thread::",
+        "[thread::",
+        "CONFIDENTIAL"
+    };
 
     public Dictionary<string, List<string>> LoadSynonyms(string path)
     {
@@ -144,6 +158,11 @@ public class MemoParserService
                 continue;
             }
 
+            if (IsIgnorableUnresolvedLine(trimmed))
+            {
+                continue;
+            }
+
             var normalizedLine = NormalizeForMatch(trimmed);
             var hasKnown = normalizedCodes.Any(code => normalizedLine.Contains(code, StringComparison.OrdinalIgnoreCase));
             var hasSynonym = normalizedSynonymTerms.Any(term => normalizedLine.Contains(term, StringComparison.OrdinalIgnoreCase));
@@ -154,6 +173,46 @@ public class MemoParserService
         }
 
         return result;
+    }
+
+    private static bool IsIgnorableUnresolvedLine(string line)
+    {
+        if (string.IsNullOrWhiteSpace(line))
+        {
+            return true;
+        }
+
+        foreach (var prefix in IgnoredHeaderPrefixes)
+        {
+            if (line.StartsWith(prefix, StringComparison.OrdinalIgnoreCase))
+            {
+                return true;
+            }
+        }
+
+        if (line.StartsWith("http://", StringComparison.OrdinalIgnoreCase) ||
+            line.StartsWith("https://", StringComparison.OrdinalIgnoreCase) ||
+            line.StartsWith("www.", StringComparison.OrdinalIgnoreCase))
+        {
+            return true;
+        }
+
+        if (line.Contains("@", StringComparison.Ordinal) ||
+            line.Contains("TEL", StringComparison.OrdinalIgnoreCase) ||
+            line.Contains("FAX", StringComparison.OrdinalIgnoreCase) ||
+            line.Contains("住所", StringComparison.Ordinal) ||
+            line.Contains("郵便", StringComparison.Ordinal))
+        {
+            return true;
+        }
+
+        if (line.All(ch =>
+                ch == '-' || ch == '_' || ch == '=' || ch == ' ' || ch == '　' || ch == '・' || ch == '*'))
+        {
+            return true;
+        }
+
+        return false;
     }
 
     private static string NormalizeForMatch(string value)
