@@ -35,7 +35,7 @@ jobs:
         run: dotnet build Project_QACInstallerPicker.sln -c Release --no-restore
 
       - name: Publish
-        run: dotnet publish QACInstallerPicker.App/QACInstallerPicker.App.csproj -c Release -r win-x64 --self-contained false -o artifacts/publish --no-restore
+        run: dotnet publish QACInstallerPicker.App/QACInstallerPicker.App.csproj -c Release -r win-x64 -o artifacts/publish --no-restore
 
       - name: Install CycloneDX tool
         run: dotnet tool install --tool-path ./.tools CycloneDX
