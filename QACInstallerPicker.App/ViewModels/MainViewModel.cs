@@ -840,7 +840,11 @@ public partial class MainViewModel : ObservableObject
         var memoForAutoParse = GetMemoPrimarySegmentForAutoParse(memo);
         var knownCodes = GetKnownMemoCodes();
         var knownCodeSet = new HashSet<string>(knownCodes, StringComparer.OrdinalIgnoreCase);
-        var versionedRequests = ParseVersionedRequests(memo, knownCodes);
+        var versionedRequests = ParseVersionedRequests(memoForAutoParse, knownCodes);
+        if (versionedRequests.Count == 0)
+        {
+            versionedRequests = ParseVersionedRequests(memo, knownCodes);
+        }
         var parseResult = _memoService.ParseMemo(memo, knownCodes, _synonyms);
         var defaultRequestedOs = GetDefaultRequestedOsFromMemo(memoForAutoParse);
         TryAutoFillCompanyNameFromMemo(memoForAutoParse);
