@@ -94,6 +94,9 @@ public partial class MainViewModel : ObservableObject
     private static readonly Regex SelfIntroCompanyRegex = new(
         @"(?<name>[^\s　、。,.]{2,60})の[^\s　、。,.]{1,24}(?:です|でございます|と申します|となります)",
         RegexOptions.Compiled);
+    private static readonly Regex SelfIntroCompanyWhitespaceRegex = new(
+        @"^(?<name>[^\s　、。,.]{2,60})[\s　]+[^\s　、。,.]{1,24}(?:です|でございます|と申します|となります)",
+        RegexOptions.Compiled);
     private static readonly Regex OsBothIntentRegex = new(
         @"(?:両方|双方|いずれも|どちらも|それぞれ|各OS|全OS|both)",
         RegexOptions.Compiled | RegexOptions.IgnoreCase);
@@ -2010,6 +2013,11 @@ public partial class MainViewModel : ObservableObject
             return false;
         }
 
+        if (IsAddresseeCompanyInMemo(cleaned, MemoText ?? string.Empty))
+        {
+            return false;
+        }
+
         var current = CompanyName?.Trim() ?? string.Empty;
         if (!string.IsNullOrWhiteSpace(current))
         {
@@ -2287,6 +2295,16 @@ public partial class MainViewModel : ObservableObject
             }
         }
 
+        var selfIntroSpaceMatch = SelfIntroCompanyWhitespaceRegex.Match(trimmed);
+        if (selfIntroSpaceMatch.Success)
+        {
+            var candidate = CleanCompanyNameCandidate(selfIntroSpaceMatch.Groups["name"].Value);
+            if (IsLikelyCompanyToken(candidate))
+            {
+                return candidate;
+            }
+        }
+
         return string.Empty;
     }
 
@@ -2410,6 +2428,26 @@ public partial class MainViewModel : ObservableObject
         }
 
         return false;
+    }
+
+    private static bool IsAddresseeCompanyInMemo(string candidate, string memoText)
+    {
+        if (string.IsNullOrWhiteSpace(candidate) || string.IsNullOrWhiteSpace(memoText))
+        {
+            return false;
+        }
+
+        var primarySegment = GetMemoPrimarySegmentForAutoParse(memoText);
+        if (string.IsNullOrWhiteSpace(primarySegment))
+        {
+            return false;
+        }
+
+        var lines = primarySegment.Split(new[] { "\r\n", "\n" }, StringSplitOptions.None)
+            .Select(line => line.Trim())
+            .ToList();
+        var addresseeCompanies = ExtractAddresseeCompanyCandidates(lines);
+        return ContainsCompanyCandidate(addresseeCompanies, candidate);
     }
 
     private static bool IsSameCompanyName(string left, string right)
