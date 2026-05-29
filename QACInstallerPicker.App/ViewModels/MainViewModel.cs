@@ -107,13 +107,16 @@ public partial class MainViewModel : ObservableObject
         @"の[^の]{1,24}(?:です|でございます|と申します|となります).*$",
         RegexOptions.Compiled);
     private static readonly Regex MemoMappingRegex = new(
-        @"^(?<term>.+?)\s*(?:=>|->|→|=|＝)\s*(?<code>[A-Za-z0-9+]+)\s*$",
+        @"^(?<term>.+?)\s*(?:=>|->|→|=|＝)\s*(?<codes>[A-Za-z0-9+\s,，、/／]+)\s*$",
         RegexOptions.Compiled);
     private static readonly Regex CompanyOverrideRegex = new(
         @"^(?:会社名|社名|企業名|法人名)\s*(?:[:：]|=>|->|→|=|＝)\s*(?<name>.+?)\s*$",
         RegexOptions.Compiled | RegexOptions.IgnoreCase);
     private static readonly Regex CompanyOverrideTailRegex = new(
         @"\s*(?:へ|に)?(?:変更|修正|上書き|優先).*$",
+        RegexOptions.Compiled | RegexOptions.IgnoreCase);
+    private static readonly Regex LearnedTermTailRegex = new(
+        @"(?:の)?(?:インストーラ(?:ー)?|インストーラー|ダウンロード|提供|希望|指定|依頼).*$",
         RegexOptions.Compiled | RegexOptions.IgnoreCase);
     private const string ScanOnlyVersionLabel = "共有スキャン";
     private const string HelixQacCode = "HelixQAC";
@@ -1029,8 +1032,25 @@ public partial class MainViewModel : ObservableObject
             }
         }
 
+        var learnedAmbiguousMatches = ResolveLearnedAmbiguousCodes(parseResult, knownCodeSet);
+        if (learnedAmbiguousMatches.Count > 0)
+        {
+            foreach (var match in learnedAmbiguousMatches.OrderBy(item => item.Term, StringComparer.OrdinalIgnoreCase))
+            {
+                decisionLines.Add(
+                    $"学習済み複数コード適用: {match.Term} => {string.Join(", ", match.Codes)}");
+            }
+        }
+
         ApplyMemoParseResult(parseResult);
         var matchedCodes = new HashSet<string>(parseResult.MatchedCodes, StringComparer.OrdinalIgnoreCase);
+        foreach (var match in learnedAmbiguousMatches)
+        {
+            foreach (var code in match.Codes)
+            {
+                matchedCodes.Add(code);
+            }
+        }
         if (llmDecision?.IsSuccess == true)
         {
             foreach (var llmCode in llmDecision.MatchedCodes)
@@ -1148,23 +1168,19 @@ public partial class MainViewModel : ObservableObject
             if (mapping.Success)
             {
                 var term = mapping.Groups["term"].Value.Trim();
-                var code = mapping.Groups["code"].Value.Trim();
-                if (term.Length > 0 && code.Length > 0)
+                var codes = ParseCorrectionMappedCodes(mapping.Groups["codes"].Value, knownCodes);
+                if (term.Length > 0 && codes.Count > 0)
                 {
-                    if (knownCodes.Contains(code))
+                    foreach (var learnedTerm in BuildLearnedTermCandidates(term))
                     {
-                        LearnMemoSynonym(term, code);
-                        SelectByCode(code, string.Empty);
-                        continue;
+                        foreach (var code in codes)
+                        {
+                            LearnMemoSynonym(learnedTerm, code);
+                            SelectByCode(code, string.Empty);
+                        }
                     }
 
-                    var normalizedCode = NormalizeModuleCode(code);
-                    if (knownCodes.Contains(normalizedCode))
-                    {
-                        LearnMemoSynonym(term, normalizedCode);
-                        SelectByCode(normalizedCode, string.Empty);
-                        continue;
-                    }
+                    continue;
                 }
             }
 
@@ -1270,6 +1286,52 @@ public partial class MainViewModel : ObservableObject
             };
             AmbiguousTerms.Add(vm);
         }
+    }
+
+    private List<LearnedAmbiguousMatch> ResolveLearnedAmbiguousCodes(
+        MemoParseResult parseResult,
+        ISet<string> knownCodes)
+    {
+        var resolved = new List<LearnedAmbiguousMatch>();
+        var learned = Settings.MemoLearnedSynonyms ?? new Dictionary<string, List<string>>();
+        if (parseResult.AmbiguousMatches.Count == 0 || learned.Count == 0 || knownCodes.Count == 0)
+        {
+            return resolved;
+        }
+
+        var remaining = new List<AmbiguousMatch>();
+        foreach (var ambiguous in parseResult.AmbiguousMatches)
+        {
+            var term = (ambiguous.Term ?? string.Empty).Trim();
+            if (term.Length == 0 ||
+                !learned.TryGetValue(term, out var learnedCodes))
+            {
+                remaining.Add(ambiguous);
+                continue;
+            }
+
+            var resolvedCodes = (learnedCodes ?? new List<string>())
+                .Where(code => !string.IsNullOrWhiteSpace(code))
+                .Select(code => NormalizeModuleCode(code))
+                .Where(code => knownCodes.Contains(code))
+                .Distinct(StringComparer.OrdinalIgnoreCase)
+                .ToList();
+            if (resolvedCodes.Count <= 1)
+            {
+                remaining.Add(ambiguous);
+                continue;
+            }
+
+            resolved.Add(new LearnedAmbiguousMatch(term, resolvedCodes));
+        }
+
+        if (remaining.Count != parseResult.AmbiguousMatches.Count)
+        {
+            parseResult.AmbiguousMatches.Clear();
+            parseResult.AmbiguousMatches.AddRange(remaining);
+        }
+
+        return resolved;
     }
 
     private List<string> GetKnownMemoCodes()
@@ -1414,6 +1476,65 @@ public partial class MainViewModel : ObservableObject
 
         list.Add(normalizedCode);
         _settingsService.Save(Settings);
+    }
+
+    private static List<string> ParseCorrectionMappedCodes(string rawCodes, ISet<string> knownCodes)
+    {
+        if (string.IsNullOrWhiteSpace(rawCodes) || knownCodes.Count == 0)
+        {
+            return new List<string>();
+        }
+
+        var result = new List<string>();
+        var unique = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        var tokens = rawCodes
+            .Split(new[] { ',', '，', '、', '/', '／', ' ', '　', '\t' }, StringSplitOptions.RemoveEmptyEntries)
+            .Select(token => token.Trim());
+        foreach (var token in tokens)
+        {
+            if (token.Length == 0)
+            {
+                continue;
+            }
+
+            if (knownCodes.Contains(token))
+            {
+                if (unique.Add(token))
+                {
+                    result.Add(token);
+                }
+
+                continue;
+            }
+
+            var normalized = NormalizeModuleCode(token);
+            if (knownCodes.Contains(normalized) && unique.Add(normalized))
+            {
+                result.Add(normalized);
+            }
+        }
+
+        return result;
+    }
+
+    private static List<string> BuildLearnedTermCandidates(string term)
+    {
+        var cleaned = (term ?? string.Empty).Trim();
+        if (cleaned.Length == 0)
+        {
+            return new List<string>();
+        }
+
+        var result = new List<string> { cleaned };
+        var shortened = LearnedTermTailRegex.Replace(cleaned, string.Empty).TrimEnd('の', 'を', 'は', 'が', ':', '：', '-', ' ');
+        if (shortened.Length >= 2 &&
+            !shortened.Equals(cleaned, StringComparison.Ordinal) &&
+            !result.Contains(shortened, StringComparer.OrdinalIgnoreCase))
+        {
+            result.Add(shortened);
+        }
+
+        return result;
     }
 
     private bool TryApplyCompanyNameOverrideFromCorrectionLine(string line)
@@ -8538,6 +8659,8 @@ public partial class MainViewModel : ObservableObject
         Linux,
         Both
     }
+
+    private sealed record LearnedAmbiguousMatch(string Term, IReadOnlyList<string> Codes);
 
     private sealed record VersionRequestTarget(string Token, string CanonicalCode);
 
