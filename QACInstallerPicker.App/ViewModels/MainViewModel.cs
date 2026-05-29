@@ -1977,6 +1977,7 @@ public partial class MainViewModel : ObservableObject
         var source = text ?? string.Empty;
         var candidate = ExtractCompanyNameFromMemo(source);
         candidate = ApplyLearnedCompanyAlias(candidate, source);
+        candidate = PromoteCompanyNameWithMarker(candidate, source);
         if (string.IsNullOrWhiteSpace(candidate))
         {
             return;
@@ -2008,6 +2009,7 @@ public partial class MainViewModel : ObservableObject
     {
         var cleaned = CleanCompanyNameCandidate(candidate ?? string.Empty);
         cleaned = ApplyLearnedCompanyAlias(cleaned, MemoText ?? string.Empty);
+        cleaned = PromoteCompanyNameWithMarker(cleaned, MemoText ?? string.Empty);
         if (string.IsNullOrWhiteSpace(cleaned))
         {
             return false;
@@ -2048,7 +2050,31 @@ public partial class MainViewModel : ObservableObject
             return string.Empty;
         }
 
-        text = GetMemoPrimarySegmentForAutoParse(text);
+        var primarySegment = GetMemoPrimarySegmentForAutoParse(text);
+        var primaryCandidate = ExtractCompanyNameFromMemoSegment(primarySegment);
+        if (!string.IsNullOrWhiteSpace(primaryCandidate))
+        {
+            return primaryCandidate;
+        }
+
+        if (!string.Equals(primarySegment, text, StringComparison.Ordinal))
+        {
+            var fullCandidate = ExtractCompanyNameFromMemoSegment(text);
+            if (!string.IsNullOrWhiteSpace(fullCandidate))
+            {
+                return fullCandidate;
+            }
+        }
+
+        return string.Empty;
+    }
+
+    private static string ExtractCompanyNameFromMemoSegment(string text)
+    {
+        if (string.IsNullOrWhiteSpace(text))
+        {
+            return string.Empty;
+        }
 
         var lines = text.Split(new[] { "\r\n", "\n" }, StringSplitOptions.None)
             .Select(line => line.Trim())
@@ -2450,6 +2476,64 @@ public partial class MainViewModel : ObservableObject
         return ContainsCompanyCandidate(addresseeCompanies, candidate);
     }
 
+    private static string PromoteCompanyNameWithMarker(string candidate, string sourceText)
+    {
+        var cleanedCandidate = CleanCompanyNameCandidate(candidate ?? string.Empty);
+        if (string.IsNullOrWhiteSpace(cleanedCandidate) ||
+            ContainsCompanyMarker(cleanedCandidate) ||
+            string.IsNullOrWhiteSpace(sourceText))
+        {
+            return cleanedCandidate;
+        }
+
+        var best = string.Empty;
+        var lines = sourceText.Split(new[] { "\r\n", "\n" }, StringSplitOptions.None);
+        foreach (var raw in lines)
+        {
+            var line = (raw ?? string.Empty).Trim();
+            if (line.Length == 0)
+            {
+                continue;
+            }
+
+            if (line.Contains("http", StringComparison.OrdinalIgnoreCase) ||
+                line.Contains("www.", StringComparison.OrdinalIgnoreCase) ||
+                line.Contains("@", StringComparison.Ordinal) ||
+                line.Contains("TEL", StringComparison.OrdinalIgnoreCase) ||
+                line.Contains("電話", StringComparison.Ordinal))
+            {
+                continue;
+            }
+
+            var matches = CompanyInlineRegex.Matches(line);
+            foreach (Match match in matches)
+            {
+                if (!match.Success)
+                {
+                    continue;
+                }
+
+                var markerCandidate = CleanCompanyNameCandidate(match.Groups["name"].Value);
+                if (string.IsNullOrWhiteSpace(markerCandidate) || !ContainsCompanyMarker(markerCandidate))
+                {
+                    continue;
+                }
+
+                if (!IsSameCompanyName(markerCandidate, cleanedCandidate))
+                {
+                    continue;
+                }
+
+                if (markerCandidate.Length > best.Length)
+                {
+                    best = markerCandidate;
+                }
+            }
+        }
+
+        return string.IsNullOrWhiteSpace(best) ? cleanedCandidate : best;
+    }
+
     private static bool IsSameCompanyName(string left, string right)
     {
         if (string.IsNullOrWhiteSpace(left) || string.IsNullOrWhiteSpace(right))
@@ -2538,6 +2622,8 @@ public partial class MainViewModel : ObservableObject
         normalized = IntroSuffixRegex.Replace(normalized, string.Empty);
         normalized = normalized.Trim('\"', '\'', '「', '」', '【', '】', '[', ']', '(', ')');
         normalized = normalized.TrimEnd('。', '、', ',', '.', '・', ':', '：', ';');
+        normalized = Regex.Replace(normalized, @"^(株式会社|有限会社|合同会社)\s+", "$1");
+        normalized = Regex.Replace(normalized, @"\s+(株式会社|有限会社|合同会社)$", "$1");
         if (normalized.Length > 80)
         {
             normalized = normalized[..80].Trim();
