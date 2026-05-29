@@ -119,7 +119,10 @@ public partial class MainViewModel : ObservableObject
         @"(?:の)?(?:インストーラ(?:ー)?|インストーラー|ダウンロード|提供|希望|指定|依頼).*$",
         RegexOptions.Compiled | RegexOptions.IgnoreCase);
     private static readonly Regex LatestVersionHintRegex = new(
-        @"(?:最新|latest).*(?:バージョン|version)|(?:バージョン|version).*(?:最新|latest)",
+        @"(?:最新|最新版|latest).*(?:バージョン|version|ver)|(?:バージョン|version|ver).*(?:最新|最新版|latest)",
+        RegexOptions.Compiled | RegexOptions.IgnoreCase);
+    private static readonly Regex VersionUnknownHintRegex = new(
+        @"(?:バージョン|version|ver).*(?:未記入|未指定|不明)|(?:未記入|未指定|不明).*(?:バージョン|version|ver)",
         RegexOptions.Compiled | RegexOptions.IgnoreCase);
     private const string ScanOnlyVersionLabel = "共有スキャン";
     private const string HelixQacCode = "HelixQAC";
@@ -199,6 +202,7 @@ public partial class MainViewModel : ObservableObject
     private const int TransferTabIndex = 2;
     private const int ShipmentInputTabIndex = 4;
     private const int ShipmentHistoryViewTabIndex = 5;
+    private const string LatestVersionPolicyDefaultToken = "__DEFAULT_WHEN_VERSION_UNKNOWN__";
     private const string ComplianceModuleSuffix = "コンプライアンスモジュール";
     private const int SelectionHistoryLimit = 5;
     private const int MemoUnresolvedHistoryLimit = 200;
@@ -1288,7 +1292,14 @@ public partial class MainViewModel : ObservableObject
                     continue;
                 }
 
-                builder.AppendLine($"{value} => 最新版");
+                if (NormalizeLatestVersionHint(value).Equals(LatestVersionPolicyDefaultToken, StringComparison.OrdinalIgnoreCase))
+                {
+                    builder.AppendLine("バージョン未記入（不明） => 最新版 (既定ルール)");
+                }
+                else
+                {
+                    builder.AppendLine($"{value} => 最新版");
+                }
             }
         }
 
@@ -1769,6 +1780,11 @@ public partial class MainViewModel : ObservableObject
             return false;
         }
 
+        if (VersionUnknownHintRegex.IsMatch(hint))
+        {
+            hint = LatestVersionPolicyDefaultToken;
+        }
+
         Settings.MemoLatestVersionHints ??= new List<string>();
         if (Settings.MemoLatestVersionHints.Any(existing =>
                 NormalizeLatestVersionHint(existing).Equals(hint, StringComparison.OrdinalIgnoreCase)))
@@ -1787,6 +1803,17 @@ public partial class MainViewModel : ObservableObject
         if (hints.Count == 0)
         {
             return false;
+        }
+
+        if (hints.Any(hint =>
+                NormalizeLatestVersionHint(hint).Equals(LatestVersionPolicyDefaultToken, StringComparison.OrdinalIgnoreCase)))
+        {
+            return true;
+        }
+
+        if (hints.Any(hint => VersionUnknownHintRegex.IsMatch(NormalizeLatestVersionHint(hint))))
+        {
+            return true;
         }
 
         var combined = NormalizeLatestVersionHint($"{primaryMemoText}\n{fullMemoText}");
