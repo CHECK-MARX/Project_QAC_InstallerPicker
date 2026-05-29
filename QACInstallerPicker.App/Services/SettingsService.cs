@@ -35,6 +35,7 @@ public class SettingsService
         settings.CustomZipPlans ??= new();
         settings.SelectionStateHistory ??= new();
         settings.MemoLearnedSynonyms = NormalizeMemoLearnedSynonyms(settings.MemoLearnedSynonyms);
+        settings.MemoLearnedCompanyAliases = NormalizeMemoLearnedCompanyAliases(settings.MemoLearnedCompanyAliases);
         settings.MemoUnresolvedHistory = NormalizeMemoUnresolvedHistory(settings.MemoUnresolvedHistory);
         settings.BulkExcelTemplateOptions ??= new();
         settings.BulkExcelTemplateOptions.ExportHelixVersion ??= string.Empty;
@@ -95,6 +96,30 @@ public class SettingsService
             .Select(value => value.Trim())
             .Distinct(StringComparer.OrdinalIgnoreCase)
             .ToList();
+    }
+
+    private static Dictionary<string, string> NormalizeMemoLearnedCompanyAliases(
+        Dictionary<string, string>? source)
+    {
+        var result = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+        if (source == null)
+        {
+            return result;
+        }
+
+        foreach (var pair in source)
+        {
+            var alias = (pair.Key ?? string.Empty).Trim();
+            var company = (pair.Value ?? string.Empty).Trim();
+            if (string.IsNullOrWhiteSpace(alias) || string.IsNullOrWhiteSpace(company))
+            {
+                continue;
+            }
+
+            result[alias] = company;
+        }
+
+        return result;
     }
 
     private static string NormalizeAiDecisionMode(string? mode)

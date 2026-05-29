@@ -112,6 +112,9 @@ public partial class MainViewModel : ObservableObject
     private static readonly Regex CompanyOverrideRegex = new(
         @"^(?:会社名|社名|企業名|法人名)\s*(?:[:：]|=>|->|→|=|＝)\s*(?<name>.+?)\s*$",
         RegexOptions.Compiled | RegexOptions.IgnoreCase);
+    private static readonly Regex CompanyOverrideTailRegex = new(
+        @"\s*(?:へ|に)?(?:変更|修正|上書き|優先).*$",
+        RegexOptions.Compiled | RegexOptions.IgnoreCase);
     private const string ScanOnlyVersionLabel = "共有スキャン";
     private const string HelixQacCode = "HelixQAC";
     private const string CustomTabLabelPrefix = "カスタム:";
@@ -1206,6 +1209,28 @@ public partial class MainViewModel : ObservableObject
         }
 
         builder.AppendLine();
+        builder.AppendLine("[会社名学習]");
+        var companyAliases = Settings.MemoLearnedCompanyAliases ?? new Dictionary<string, string>();
+        if (companyAliases.Count == 0)
+        {
+            builder.AppendLine("(なし)");
+        }
+        else
+        {
+            foreach (var pair in companyAliases.OrderBy(pair => pair.Key, StringComparer.OrdinalIgnoreCase))
+            {
+                var alias = (pair.Key ?? string.Empty).Trim();
+                var company = (pair.Value ?? string.Empty).Trim();
+                if (alias.Length == 0 || company.Length == 0)
+                {
+                    continue;
+                }
+
+                builder.AppendLine($"{alias} => {company}");
+            }
+        }
+
+        builder.AppendLine();
         builder.AppendLine("[未解決履歴]");
         if (MemoUnresolvedHistoryItems.Count == 0)
         {
@@ -1402,14 +1427,40 @@ public partial class MainViewModel : ObservableObject
         var forceOverride = ContainsCompanyOverrideHint(trimmed);
 
         var labelMatch = CompanyOverrideRegex.Match(trimmed);
-        if (labelMatch.Success &&
-            TrySetCompanyNameFromCorrectionCandidate(labelMatch.Groups["name"].Value, force: true))
+        if (labelMatch.Success)
         {
-            return true;
+            var company = ExtractCompanyNameFromOverrideSource(labelMatch.Groups["name"].Value);
+            if (!string.IsNullOrWhiteSpace(company))
+            {
+                LearnCompanyAlias(CompanyName, company);
+            }
+
+            if (TrySetCompanyNameFromCorrectionCandidate(labelMatch.Groups["name"].Value, force: true))
+            {
+                return true;
+            }
         }
 
         if (TrySplitMappingLine(trimmed, out var left, out var right))
         {
+            var rightCompany = ExtractCompanyNameFromOverrideSource(right);
+            if (!string.IsNullOrWhiteSpace(rightCompany))
+            {
+                LearnCompanyAlias(left, rightCompany);
+                LearnCompanyAlias(CompanyName, rightCompany);
+                TrySetCompanyNameFromCorrectionCandidate(rightCompany, force: true);
+                return true;
+            }
+
+            var leftCompany = ExtractCompanyNameFromOverrideSource(left);
+            if (!string.IsNullOrWhiteSpace(leftCompany))
+            {
+                LearnCompanyAlias(right, leftCompany);
+                LearnCompanyAlias(CompanyName, leftCompany);
+                TrySetCompanyNameFromCorrectionCandidate(leftCompany, force: true);
+                return true;
+            }
+
             if (TrySetCompanyNameFromCorrectionCandidate(right, force: forceOverride))
             {
                 return true;
@@ -1422,6 +1473,31 @@ public partial class MainViewModel : ObservableObject
         }
 
         return forceOverride && TrySetCompanyNameFromCorrectionCandidate(trimmed, force: true);
+    }
+
+    private void LearnCompanyAlias(string alias, string companyName)
+    {
+        var normalizedAlias = (alias ?? string.Empty).Trim();
+        var normalizedCompany = ExtractCompanyNameFromOverrideSource(companyName);
+        if (string.IsNullOrWhiteSpace(normalizedAlias) || string.IsNullOrWhiteSpace(normalizedCompany))
+        {
+            return;
+        }
+
+        if (IsSameCompanyName(normalizedAlias, normalizedCompany))
+        {
+            return;
+        }
+
+        Settings.MemoLearnedCompanyAliases ??= new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+        if (Settings.MemoLearnedCompanyAliases.TryGetValue(normalizedAlias, out var current) &&
+            IsSameCompanyName(current, normalizedCompany))
+        {
+            return;
+        }
+
+        Settings.MemoLearnedCompanyAliases[normalizedAlias] = normalizedCompany;
+        _settingsService.Save(Settings);
     }
 
     private bool TrySetCompanyNameFromCorrectionCandidate(string source, bool force)
@@ -1469,7 +1545,8 @@ public partial class MainViewModel : ObservableObject
             return inline;
         }
 
-        var cleaned = CleanCompanyNameCandidate(trimmed);
+        var cleaned = CompanyOverrideTailRegex.Replace(trimmed, string.Empty).Trim();
+        cleaned = CleanCompanyNameCandidate(cleaned);
         return ContainsCompanyMarker(cleaned) ? cleaned : string.Empty;
     }
 
@@ -1507,9 +1584,101 @@ public partial class MainViewModel : ObservableObject
         return false;
     }
 
+    private string ApplyLearnedCompanyAlias(string candidate, string sourceText)
+    {
+        if (TryResolveCompanyAlias(candidate, out var resolvedByCandidate))
+        {
+            return resolvedByCandidate;
+        }
+
+        if (TryResolveCompanyAlias(sourceText, out var resolvedByText))
+        {
+            return resolvedByText;
+        }
+
+        return candidate;
+    }
+
+    private bool TryResolveCompanyAlias(string source, out string resolvedCompany)
+    {
+        resolvedCompany = string.Empty;
+        var learned = Settings.MemoLearnedCompanyAliases ?? new Dictionary<string, string>();
+        if (learned.Count == 0 || string.IsNullOrWhiteSpace(source))
+        {
+            return false;
+        }
+
+        var normalizedSource = NormalizeCompanyAliasKey(source);
+        if (normalizedSource.Length == 0)
+        {
+            return false;
+        }
+
+        string? bestCompany = null;
+        var bestScore = -1;
+        foreach (var pair in learned)
+        {
+            var alias = (pair.Key ?? string.Empty).Trim();
+            var company = ExtractCompanyNameFromOverrideSource(pair.Value ?? string.Empty);
+            if (alias.Length == 0 || company.Length == 0)
+            {
+                continue;
+            }
+
+            var normalizedAlias = NormalizeCompanyAliasKey(alias);
+            if (normalizedAlias.Length < 3)
+            {
+                continue;
+            }
+
+            if (!normalizedSource.Contains(normalizedAlias, StringComparison.OrdinalIgnoreCase))
+            {
+                continue;
+            }
+
+            if (normalizedAlias.Length <= bestScore)
+            {
+                continue;
+            }
+
+            bestCompany = company;
+            bestScore = normalizedAlias.Length;
+        }
+
+        if (string.IsNullOrWhiteSpace(bestCompany))
+        {
+            return false;
+        }
+
+        resolvedCompany = bestCompany;
+        return true;
+    }
+
+    private static string NormalizeCompanyAliasKey(string value)
+    {
+        if (string.IsNullOrWhiteSpace(value))
+        {
+            return string.Empty;
+        }
+
+        var normalized = value.Normalize(NormalizationForm.FormKC);
+        var builder = new StringBuilder(normalized.Length);
+        foreach (var ch in normalized)
+        {
+            if (char.IsLetterOrDigit(ch))
+            {
+                builder.Append(char.ToUpperInvariant(ch));
+            }
+        }
+
+        return builder.ToString();
+    }
+
     private void TryAutoFillCompanyNameFromMemo(string? text)
     {
-        var candidate = ExtractCompanyNameFromMemo(text ?? string.Empty);
+        var source = text ?? string.Empty;
+        var candidate = ExtractCompanyNameFromMemo(source);
+        candidate = ApplyLearnedCompanyAlias(candidate, source);
         if (string.IsNullOrWhiteSpace(candidate))
         {
             return;
@@ -1540,6 +1709,7 @@ public partial class MainViewModel : ObservableObject
     private bool TryApplyCompanyNameFromLlm(string? candidate)
     {
         var cleaned = CleanCompanyNameCandidate(candidate ?? string.Empty);
+        cleaned = ApplyLearnedCompanyAlias(cleaned, MemoText ?? string.Empty);
         if (string.IsNullOrWhiteSpace(cleaned))
         {
             return false;
