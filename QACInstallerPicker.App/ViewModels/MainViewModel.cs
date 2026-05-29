@@ -109,6 +109,9 @@ public partial class MainViewModel : ObservableObject
     private static readonly Regex MemoMappingRegex = new(
         @"^(?<term>.+?)\s*(?:=>|->|→|=|＝)\s*(?<code>[A-Za-z0-9+]+)\s*$",
         RegexOptions.Compiled);
+    private static readonly Regex CompanyOverrideRegex = new(
+        @"^(?:会社名|社名|企業名|法人名)\s*(?:[:：]|=>|->|→|=|＝)\s*(?<name>.+?)\s*$",
+        RegexOptions.Compiled | RegexOptions.IgnoreCase);
     private const string ScanOnlyVersionLabel = "共有スキャン";
     private const string HelixQacCode = "HelixQAC";
     private const string CustomTabLabelPrefix = "カスタム:";
@@ -1133,6 +1136,11 @@ public partial class MainViewModel : ObservableObject
                 continue;
             }
 
+            if (TryApplyCompanyNameOverrideFromCorrectionLine(line))
+            {
+                continue;
+            }
+
             var mapping = MemoMappingRegex.Match(line);
             if (mapping.Success)
             {
@@ -1381,6 +1389,122 @@ public partial class MainViewModel : ObservableObject
 
         list.Add(normalizedCode);
         _settingsService.Save(Settings);
+    }
+
+    private bool TryApplyCompanyNameOverrideFromCorrectionLine(string line)
+    {
+        if (string.IsNullOrWhiteSpace(line))
+        {
+            return false;
+        }
+
+        var trimmed = line.Trim();
+        var forceOverride = ContainsCompanyOverrideHint(trimmed);
+
+        var labelMatch = CompanyOverrideRegex.Match(trimmed);
+        if (labelMatch.Success &&
+            TrySetCompanyNameFromCorrectionCandidate(labelMatch.Groups["name"].Value, force: true))
+        {
+            return true;
+        }
+
+        if (TrySplitMappingLine(trimmed, out var left, out var right))
+        {
+            if (TrySetCompanyNameFromCorrectionCandidate(right, force: forceOverride))
+            {
+                return true;
+            }
+
+            if (TrySetCompanyNameFromCorrectionCandidate(left, force: forceOverride))
+            {
+                return true;
+            }
+        }
+
+        return forceOverride && TrySetCompanyNameFromCorrectionCandidate(trimmed, force: true);
+    }
+
+    private bool TrySetCompanyNameFromCorrectionCandidate(string source, bool force)
+    {
+        var candidate = ExtractCompanyNameFromOverrideSource(source);
+        if (string.IsNullOrWhiteSpace(candidate))
+        {
+            return false;
+        }
+
+        var current = CompanyName?.Trim() ?? string.Empty;
+        if (!string.IsNullOrWhiteSpace(current))
+        {
+            var canReplace = force || _isCompanyNameAutoFilled || ShouldReplaceExistingCompanyName(current, candidate);
+            if (!canReplace || current.Equals(candidate, StringComparison.Ordinal))
+            {
+                return false;
+            }
+        }
+
+        _isSettingCompanyNameFromMemo = true;
+        try
+        {
+            CompanyName = candidate;
+            _isCompanyNameAutoFilled = true;
+            return true;
+        }
+        finally
+        {
+            _isSettingCompanyNameFromMemo = false;
+        }
+    }
+
+    private static string ExtractCompanyNameFromOverrideSource(string source)
+    {
+        var trimmed = (source ?? string.Empty).Trim();
+        if (trimmed.Length == 0)
+        {
+            return string.Empty;
+        }
+
+        var inline = TryExtractCompanyFromLine(trimmed, strict: false);
+        if (!string.IsNullOrWhiteSpace(inline))
+        {
+            return inline;
+        }
+
+        var cleaned = CleanCompanyNameCandidate(trimmed);
+        return ContainsCompanyMarker(cleaned) ? cleaned : string.Empty;
+    }
+
+    private static bool ContainsCompanyOverrideHint(string line)
+    {
+        return line.Contains("会社名として優先", StringComparison.Ordinal)
+               || line.Contains("会社名優先", StringComparison.Ordinal)
+               || line.Contains("として優先", StringComparison.Ordinal)
+               || line.Contains("を優先", StringComparison.Ordinal);
+    }
+
+    private static bool TrySplitMappingLine(string line, out string left, out string right)
+    {
+        left = string.Empty;
+        right = string.Empty;
+        if (string.IsNullOrWhiteSpace(line))
+        {
+            return false;
+        }
+
+        var separators = new[] { "=>", "->", "→", "＝", "=" };
+        foreach (var separator in separators)
+        {
+            var index = line.IndexOf(separator, StringComparison.Ordinal);
+            if (index < 0)
+            {
+                continue;
+            }
+
+            left = line[..index].Trim();
+            right = line[(index + separator.Length)..].Trim();
+            return left.Length > 0 && right.Length > 0;
+        }
+
+        return false;
     }
 
     private void TryAutoFillCompanyNameFromMemo(string? text)
