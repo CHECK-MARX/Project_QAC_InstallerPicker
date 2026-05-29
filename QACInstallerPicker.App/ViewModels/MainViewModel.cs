@@ -118,6 +118,9 @@ public partial class MainViewModel : ObservableObject
     private static readonly Regex LearnedTermTailRegex = new(
         @"(?:の)?(?:インストーラ(?:ー)?|インストーラー|ダウンロード|提供|希望|指定|依頼).*$",
         RegexOptions.Compiled | RegexOptions.IgnoreCase);
+    private static readonly Regex LatestVersionHintRegex = new(
+        @"(?:最新|latest).*(?:バージョン|version)|(?:バージョン|version).*(?:最新|latest)",
+        RegexOptions.Compiled | RegexOptions.IgnoreCase);
     private const string ScanOnlyVersionLabel = "共有スキャン";
     private const string HelixQacCode = "HelixQAC";
     private const string CustomTabLabelPrefix = "カスタム:";
@@ -880,17 +883,34 @@ public partial class MainViewModel : ObservableObject
 
         var helixMatch = FindHelixVersionFromText(memoForAutoParse);
         helixMatch ??= FindHelixVersionFromText(memo);
+        var requestedHelixVersion = FindRequestedHelixVersionToken(memoForAutoParse);
+        requestedHelixVersion ??= FindRequestedHelixVersionToken(memo);
+        var latestVersionPolicyApplied = false;
+        if (helixMatch == null &&
+            string.IsNullOrWhiteSpace(requestedHelixVersion) &&
+            versionedRequests.Count == 0 &&
+            ShouldPreferLatestVersionForMemo(memoForAutoParse, memo))
+        {
+            helixMatch = FindLatestHelixVersion();
+            latestVersionPolicyApplied = helixMatch != null;
+        }
+
         var versionResult = "バージョン: (選択中のまま)";
         if (helixMatch != null)
         {
             SelectedVersion = helixMatch;
             versionResult = $"バージョン: {helixMatch.Version}";
-            decisionLines.Add($"Helix判定: {helixMatch.Version}");
+            if (latestVersionPolicyApplied)
+            {
+                decisionLines.Add($"Helix判定: 最新版方針適用 ({helixMatch.Version})");
+            }
+            else
+            {
+                decisionLines.Add($"Helix判定: {helixMatch.Version}");
+            }
         }
         else
         {
-            var requestedHelixVersion = FindRequestedHelixVersionToken(memoForAutoParse);
-            requestedHelixVersion ??= FindRequestedHelixVersionToken(memo);
             if (!string.IsNullOrWhiteSpace(requestedHelixVersion))
             {
                 versionResult = $"該当バージョンなし: {requestedHelixVersion}";
@@ -1164,6 +1184,11 @@ public partial class MainViewModel : ObservableObject
                 continue;
             }
 
+            if (TryLearnLatestVersionHintFromCorrectionLine(line))
+            {
+                continue;
+            }
+
             var mapping = MemoMappingRegex.Match(line);
             if (mapping.Success)
             {
@@ -1243,6 +1268,27 @@ public partial class MainViewModel : ObservableObject
                 }
 
                 builder.AppendLine($"{alias} => {company}");
+            }
+        }
+
+        builder.AppendLine();
+        builder.AppendLine("[最新版方針学習]");
+        var latestHints = Settings.MemoLatestVersionHints ?? new List<string>();
+        if (latestHints.Count == 0)
+        {
+            builder.AppendLine("(なし)");
+        }
+        else
+        {
+            foreach (var hint in latestHints.OrderBy(value => value, StringComparer.OrdinalIgnoreCase))
+            {
+                var value = (hint ?? string.Empty).Trim();
+                if (value.Length == 0)
+                {
+                    continue;
+                }
+
+                builder.AppendLine($"{value} => 最新版");
             }
         }
 
@@ -1703,6 +1749,103 @@ public partial class MainViewModel : ObservableObject
         }
 
         return false;
+    }
+
+    private bool TryLearnLatestVersionHintFromCorrectionLine(string line)
+    {
+        if (!TrySplitMappingLine(line, out var left, out var right))
+        {
+            return false;
+        }
+
+        if (!LatestVersionHintRegex.IsMatch(right))
+        {
+            return false;
+        }
+
+        var hint = NormalizeLatestVersionHint(left);
+        if (hint.Length == 0)
+        {
+            return false;
+        }
+
+        Settings.MemoLatestVersionHints ??= new List<string>();
+        if (Settings.MemoLatestVersionHints.Any(existing =>
+                NormalizeLatestVersionHint(existing).Equals(hint, StringComparison.OrdinalIgnoreCase)))
+        {
+            return true;
+        }
+
+        Settings.MemoLatestVersionHints.Add(hint);
+        _settingsService.Save(Settings);
+        return true;
+    }
+
+    private bool ShouldPreferLatestVersionForMemo(string primaryMemoText, string fullMemoText)
+    {
+        var hints = Settings.MemoLatestVersionHints ?? new List<string>();
+        if (hints.Count == 0)
+        {
+            return false;
+        }
+
+        var combined = NormalizeLatestVersionHint($"{primaryMemoText}\n{fullMemoText}");
+        if (combined.Length == 0)
+        {
+            return false;
+        }
+
+        foreach (var hint in hints)
+        {
+            var normalizedHint = NormalizeLatestVersionHint(hint);
+            if (normalizedHint.Length < 2)
+            {
+                continue;
+            }
+
+            if (combined.Contains(normalizedHint, StringComparison.OrdinalIgnoreCase))
+            {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    private HelixVersionViewModel? FindLatestHelixVersion()
+    {
+        HelixVersionViewModel? latest = null;
+        foreach (var candidate in HelixVersions)
+        {
+            if (latest == null ||
+                VersionUtil.CompareVersionLike(candidate.Version, latest.Version) > 0)
+            {
+                latest = candidate;
+            }
+        }
+
+        return latest;
+    }
+
+    private static string NormalizeLatestVersionHint(string value)
+    {
+        if (string.IsNullOrWhiteSpace(value))
+        {
+            return string.Empty;
+        }
+
+        var normalized = value.Normalize(NormalizationForm.FormKC);
+        var builder = new StringBuilder(normalized.Length);
+        foreach (var ch in normalized)
+        {
+            if (!char.IsWhiteSpace(ch))
+            {
+                builder.Append(ch);
+            }
+        }
+
+        var compact = builder.ToString().Trim();
+        return compact.TrimEnd('。', '、', ',', '.', ';', ':', '：');
     }
 
     private string ApplyLearnedCompanyAlias(string candidate, string sourceText)

@@ -36,6 +36,7 @@ public class SettingsService
         settings.SelectionStateHistory ??= new();
         settings.MemoLearnedSynonyms = NormalizeMemoLearnedSynonyms(settings.MemoLearnedSynonyms);
         settings.MemoLearnedCompanyAliases = NormalizeMemoLearnedCompanyAliases(settings.MemoLearnedCompanyAliases);
+        settings.MemoLatestVersionHints = NormalizeMemoLatestVersionHints(settings.MemoLatestVersionHints);
         settings.MemoUnresolvedHistory = NormalizeMemoUnresolvedHistory(settings.MemoUnresolvedHistory);
         settings.BulkExcelTemplateOptions ??= new();
         settings.BulkExcelTemplateOptions.ExportHelixVersion ??= string.Empty;
@@ -120,6 +121,20 @@ public class SettingsService
         }
 
         return result;
+    }
+
+    private static List<string> NormalizeMemoLatestVersionHints(List<string>? source)
+    {
+        if (source == null)
+        {
+            return new List<string>();
+        }
+
+        return source
+            .Where(value => !string.IsNullOrWhiteSpace(value))
+            .Select(value => value.Trim())
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .ToList();
     }
 
     private static string NormalizeAiDecisionMode(string? mode)

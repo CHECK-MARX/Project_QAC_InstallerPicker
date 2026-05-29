@@ -18,6 +18,7 @@ public class SettingsModel
     public List<SelectionStateHistoryEntry> SelectionStateHistory { get; set; } = new();
     public Dictionary<string, List<string>> MemoLearnedSynonyms { get; set; } = new();
     public Dictionary<string, string> MemoLearnedCompanyAliases { get; set; } = new();
+    public List<string> MemoLatestVersionHints { get; set; } = new();
     public List<string> MemoUnresolvedHistory { get; set; } = new();
     public BulkExcelTemplateOptions BulkExcelTemplateOptions { get; set; } = new();
 }
