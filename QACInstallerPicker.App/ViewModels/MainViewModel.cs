@@ -97,6 +97,9 @@ public partial class MainViewModel : ObservableObject
     private static readonly Regex SelfIntroCompanyWhitespaceRegex = new(
         @"^(?<name>[^\s　、。,.]{2,60})[\s　]+[^\s　、。,.]{1,24}(?:です|でございます|と申します|となります)",
         RegexOptions.Compiled);
+    private static readonly Regex CompanyNoiseTokenRegex = new(
+        @"(?:上記|下記|について|承知|お願い|お願|よろしく|ご連絡|方法|資料|最新版|最新|ダウンロード|インストーラ|Windows|Linux|Win|Lin|QAC|QAC\+\+)",
+        RegexOptions.Compiled | RegexOptions.IgnoreCase);
     private static readonly Regex OsBothIntentRegex = new(
         @"(?:両方|双方|いずれも|どちらも|それぞれ|各OS|全OS|both)",
         RegexOptions.Compiled | RegexOptions.IgnoreCase);
@@ -1978,7 +1981,7 @@ public partial class MainViewModel : ObservableObject
         var candidate = ExtractCompanyNameFromMemo(source);
         candidate = ApplyLearnedCompanyAlias(candidate, source);
         candidate = PromoteCompanyNameWithMarker(candidate, source);
-        if (string.IsNullOrWhiteSpace(candidate))
+        if (string.IsNullOrWhiteSpace(candidate) || !IsLikelyCompanyToken(candidate))
         {
             return;
         }
@@ -2010,7 +2013,7 @@ public partial class MainViewModel : ObservableObject
         var cleaned = CleanCompanyNameCandidate(candidate ?? string.Empty);
         cleaned = ApplyLearnedCompanyAlias(cleaned, MemoText ?? string.Empty);
         cleaned = PromoteCompanyNameWithMarker(cleaned, MemoText ?? string.Empty);
-        if (string.IsNullOrWhiteSpace(cleaned))
+        if (string.IsNullOrWhiteSpace(cleaned) || !IsLikelyCompanyToken(cleaned))
         {
             return false;
         }
@@ -2388,6 +2391,21 @@ public partial class MainViewModel : ObservableObject
             value.Contains("部", StringComparison.Ordinal) ||
             value.Contains("課", StringComparison.Ordinal) ||
             value.Contains("担当", StringComparison.Ordinal))
+        {
+            return false;
+        }
+
+        if (value.Contains("/", StringComparison.Ordinal) ||
+            value.Contains("\\", StringComparison.Ordinal) ||
+            value.Contains("?", StringComparison.Ordinal) ||
+            value.Contains("？", StringComparison.Ordinal) ||
+            value.Contains("!", StringComparison.Ordinal) ||
+            value.Contains("！", StringComparison.Ordinal))
+        {
+            return false;
+        }
+
+        if (CompanyNoiseTokenRegex.IsMatch(value))
         {
             return false;
         }
