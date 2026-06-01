@@ -132,6 +132,16 @@ public class MemoParserService
                 }
                 else
                 {
+                    var deterministicCodes = entry.Codes
+                        .Where(code => matchedCodes.Contains(code))
+                        .Distinct(StringComparer.OrdinalIgnoreCase)
+                        .ToList();
+                    if (deterministicCodes.Count == 1)
+                    {
+                        matchedCodes.Add(deterministicCodes[0]);
+                        continue;
+                    }
+
                     result.AmbiguousMatches.Add(new AmbiguousMatch
                     {
                         Term = entry.Term,

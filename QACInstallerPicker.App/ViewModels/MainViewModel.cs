@@ -808,7 +808,7 @@ public partial class MainViewModel : ObservableObject
 
         var fullMemo = MemoText ?? string.Empty;
         var memoForAutoParse = GetMemoPrimarySegmentForAutoParse(MemoText ?? string.Empty);
-        TryAutoFillCompanyNameFromMemo(memoForAutoParse);
+        TryAutoFillCompanyNameFromMemo(fullMemo);
         var knownCodes = GetKnownMemoCodes();
         var result = _memoService.ParseMemo(fullMemo, knownCodes, _synonyms);
         ApplyMemoParseResult(result);
@@ -849,8 +849,8 @@ public partial class MainViewModel : ObservableObject
             versionedRequests = ParseVersionedRequests(memo, knownCodes);
         }
         var parseResult = _memoService.ParseMemo(memo, knownCodes, _synonyms);
-        var defaultRequestedOs = GetDefaultRequestedOsFromMemo(memoForAutoParse);
-        TryAutoFillCompanyNameFromMemo(memoForAutoParse);
+        var defaultRequestedOs = GetDefaultRequestedOsFromMemo(memo);
+        TryAutoFillCompanyNameFromMemo(memo);
         var decisionLines = new List<string>();
         var company = string.IsNullOrWhiteSpace(CompanyName) ? "(未設定)" : CompanyName.Trim();
         decisionLines.Add($"会社名: {company} ({(_isCompanyNameAutoFilled ? "自動抽出" : "既存/手入力")})");
@@ -9048,7 +9048,7 @@ public partial class MainViewModel : ObservableObject
     {
         if (string.IsNullOrWhiteSpace(CompanyName))
         {
-            TryAutoFillCompanyNameFromMemo(GetMemoPrimarySegmentForAutoParse(value));
+            TryAutoFillCompanyNameFromMemo(value);
         }
     }
 
