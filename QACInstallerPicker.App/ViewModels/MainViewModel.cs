@@ -2388,9 +2388,19 @@ public partial class MainViewModel : ObservableObject
 
         if (value.Contains("様", StringComparison.Ordinal) ||
             value.Contains("御中", StringComparison.Ordinal) ||
-            value.Contains("部", StringComparison.Ordinal) ||
-            value.Contains("課", StringComparison.Ordinal) ||
             value.Contains("担当", StringComparison.Ordinal))
+        {
+            return false;
+        }
+
+        var hasDepartmentLikeWord = value.Contains("部", StringComparison.Ordinal) ||
+                                    value.Contains("課", StringComparison.Ordinal);
+        var hasHeadOfficeLikeWord = value.Contains("本部", StringComparison.Ordinal) ||
+                                    value.Contains("事業部", StringComparison.Ordinal) ||
+                                    value.Contains("センター", StringComparison.Ordinal) ||
+                                    value.Contains("研究所", StringComparison.Ordinal) ||
+                                    value.Contains("工場", StringComparison.Ordinal);
+        if (hasDepartmentLikeWord && !hasHeadOfficeLikeWord && !ContainsCompanyMarker(value))
         {
             return false;
         }
