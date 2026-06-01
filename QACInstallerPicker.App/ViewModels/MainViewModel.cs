@@ -8685,12 +8685,18 @@ public partial class MainViewModel : ObservableObject
         }
 
         var normalized = text.Normalize(NormalizationForm.FormKC);
+        var qacVersionCandidates = new List<string>();
         foreach (Match match in VersionRegex.Matches(normalized))
         {
             var token = match.Value;
             var looksLikeHelixVersion = IsLikelyHelixVersionToken(token);
             if (!looksLikeHelixVersion && !HasHelixKeywordNearToken(normalized, match.Index, match.Length))
             {
+                if (HasQacKeywordNearToken(normalized, match.Index, match.Length))
+                {
+                    qacVersionCandidates.Add(token);
+                }
+
                 continue;
             }
 
@@ -8698,6 +8704,15 @@ public partial class MainViewModel : ObservableObject
             if (helix != null)
             {
                 return helix;
+            }
+        }
+
+        foreach (var qacVersion in qacVersionCandidates.Distinct(StringComparer.OrdinalIgnoreCase))
+        {
+            var helixByQac = FindHelixVersionByQacVersionToken(qacVersion);
+            if (helixByQac != null)
+            {
+                return helixByQac;
             }
         }
 
@@ -8817,6 +8832,63 @@ public partial class MainViewModel : ObservableObject
 
         var context = text[start..end];
         return context.Contains("helix", StringComparison.OrdinalIgnoreCase);
+    }
+
+    private static bool HasQacKeywordNearToken(string text, int tokenStartIndex, int tokenLength)
+    {
+        if (string.IsNullOrWhiteSpace(text))
+        {
+            return false;
+        }
+
+        var start = Math.Max(0, tokenStartIndex - 24);
+        var end = Math.Min(text.Length, tokenStartIndex + tokenLength + 24);
+        if (end <= start)
+        {
+            return false;
+        }
+
+        var context = text[start..end];
+        return context.Contains("qac", StringComparison.OrdinalIgnoreCase)
+               || context.Contains("本体", StringComparison.Ordinal)
+               || context.Contains("perforce", StringComparison.OrdinalIgnoreCase);
+    }
+
+    private HelixVersionViewModel? FindHelixVersionByQacVersionToken(string token)
+    {
+        var requested = token?.Trim() ?? string.Empty;
+        if (requested.Length == 0 || _compatibility == null || HelixVersions.Count == 0)
+        {
+            return null;
+        }
+
+        HelixVersionViewModel? best = null;
+        foreach (var helix in HelixVersions)
+        {
+            var helixData = _compatibility.Versions.FirstOrDefault(v =>
+                v.Version.Equals(helix.Version, StringComparison.OrdinalIgnoreCase));
+            if (helixData == null)
+            {
+                continue;
+            }
+
+            var qacVersion = GetCompatibilityModuleVersion(helixData, "QAC");
+            if (string.IsNullOrWhiteSpace(qacVersion))
+            {
+                continue;
+            }
+
+            if (IsVersionMatch(requested, qacVersion))
+            {
+                if (best == null ||
+                    VersionUtil.CompareVersionLike(helix.Version, best.Version) > 0)
+                {
+                    best = helix;
+                }
+            }
+        }
+
+        return best;
     }
 
     private static int GetRequiredVersionMatchCount(string version)
