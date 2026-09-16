@@ -1,0 +1,71 @@
+# This Stored Metric Configuration fully enables the churn report
+# Please refer to documentation for more information
+metrics: [
+    # file level metrics
+    LOC_FILE,                        # number of lines of code
+    LINESCOMM,                       # number of lines of comments
+    NOCLASSDECL,                     # number of class declarations
+    NOCONSTDECL,                     # number of constant declarations
+    NODATADECL,                      # number of variable declarations
+    NOCOMMSECT,                      # number of comment sections
+    NOMACROS,                        # number of macros defined
+    NOLOCALINC,                      # number of local includes
+    NOSYSINC,                        # number of system includes
+    NO3DPINC,                        # number of 3rd party includes
+    INCLDIRECTIVES,                  # number of include directives in the file
+    NOROUTINES,                      # number of functions and methods in the file
+    RLOC,                            # number of lines of code for all routines in the file
+    CNOMETH,                         # number of methods for all classes of the file (includes stand-alone methods in c++)
+    BLANKLINES,                      # number of blank lines in the file
+    TOTALINC,                        # total number of included files
+    NCNBLOC_FILE,                    # non-comment non-blank source lines in the file
+    NOSYNERR_FILE,                   # number of syntax/parsing errors in the file
+
+    # class level metrics
+    LOC_CLASS,                       # lines of code in the class
+    NOMETH,                          # number of methods
+    LEVINHER,                        # level of inheritance
+    NOCLASSDATADECL,                 # number of data declarations in the class
+    NODATACLASS,                     # number of object declarations in the class
+    NOPRIVDATADEC,                   # number of private attributes for the class
+    NOPROTDATADECL,                  # number of protected attributes for the class
+    NOPUBDATADECL,                   # number of public attributes for the class
+    NOSTDATADECL,                    # number of static attributes for the class
+    NOPRIVMETH,                      # number of private methods in the class
+    NOPROTMETH,                      # number of protected methods in the class
+    NOPUBMETH,                       # number of public methods in the class
+    NOMSG,                           # number of ways class can be accessed
+    NOPTRDECL,                       # number of pointers items in the class
+    HASPTRWODESTR,                   # class has pointers without destructor
+    NOINLINEMETH,                    # number of in-line methods in the class
+    BYTESDATADECL,                   # bytes of data item declared in the class
+    NOCONSTMETH,                     # number of const methods in the class
+    NOVIRTMETH,                      # number of pure virtual methods
+    NCNBLOC_CLASS,                   # non-comment non-blank source lines in the class
+
+    # function level metrics
+    LOC_METHOD,                      # lines of code in method
+    NOOPUSED,                        # number of operands used
+    NOOPRUSED,                       # number of operators used
+    NORET,                           # number of returns
+    CYCLOMATIC,                      # cyclomatic complexity
+    NOINDPATHS,                      # number of independent paths
+    NOCALLS,                         # number of calls
+    NOPAROTHER,                      # number of parameters passed to other functions
+    NOSTAT,                          # number of statements
+    NOLOOPS,                         # number of loops
+    NOBRANCH,                        # number of branches
+    MAXLEVEL,                        # maximum level of control nesting
+    NOLOCDECL,                       # number of local declarations
+    NOCONTROLSTAT,                   # number of control statements in function/method
+    NOMDECLSTAT,                     # number of declarative statements in function/method
+    NOACCTOGLOB,                     # number of accesses to global variables
+    BYTESLOCDECL,                    # bytes of local variables declared
+    BYTESPAROTHER,                   # bytes of parameters passed to other functions
+    ACAIC,                           # ancestor class-attribute import coupling
+    ACMIC,                           # ancestor class-method import coupling
+    OCAIC,                           # class-attribute import coupling
+    OCMIC,                           # class-method import coupling
+    AMMIC,                           # ancestor class-method-class-method import coupling
+    OMMIC,                           # class-method-class-method import coupling
+]

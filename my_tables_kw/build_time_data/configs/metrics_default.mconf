@@ -1,0 +1,39 @@
+# This is the default metrics thresholds configuration file for Klocwork Insight.
+# 
+# Each line of this file, except comment lines and header lines, is a rule that 
+# sets a threshold for one of the default or custom metrics.
+# 
+# Format of each rule:
+# Name;Entity-Type;Metric-Expression;Error-Threshold;Warning-Threshold
+# 
+# Name - the name of rule; will be displayed if the rule is violated
+# Entity-Type - the FUNCTION, CLASS-METHOD, CLASS or FILE where the metric is 
+# applicable
+# Metric-Expression - can contain +,-,*,/,%,(), function calls, numbers, basic 
+# metrics and aliases
+#   Function calls: log, sin, exp, int, abs, cos, atan2, sqrt, rand :)
+# Error-Threshold: comparison expression; if violated, an Error is displayed
+# Warning-Threshold: comparison expression; if violated, a Warning is displayed
+#
+# Categories - You can use header lines to group your rules into categories. 
+# For example:
+# WARNING.SEVERITY=4 ERROR.SEVERITY=2 WARNING.CATEGORY="User Defined Warning Category 1" ERROR.CATEGORY="User Defined Error Category 1"
+# 
+# Aliases - The #!alias syntax allows you to substitute text in the rules.
+# Syntax: #!alias <Variable>=<Metric-Expression>
+# Following the #!alias line, <variable> will be substituted as <Metric-Expression>.
+#
+#WARNING.SEVERITY=4 ERROR.SEVERITY=2 WARNING.CATEGORY="User Defined Warning Category 1" ERROR.CATEGORY="User Defined Error Category 1"
+#Number of lines of code of function;FUNCTION,CLASS-METHOD;LOC_METHOD;>100;>30
+#Percent of comments;FILE;LINESCOMM/LOC_FILE*100;<5;<10
+#Logarithm of number of paths (NP);FUNCTION,CLASS-METHOD;NOINDPATHS;10;7
+#Number of returns;FUNCTION,CLASS-METHOD;NORET;20;7
+#WARNING.SEVERITY=4 ERROR.SEVERITY=2 WARNING.CATEGORY="User Defined Warning Category 2" ERROR.CATEGORY="User Defined Error Category 2"
+#Cyclomatic complexity (VG);FUNCTION,CLASS-;CYCLOMATIC;30;20
+##!alias HALSTEAD=(NOOPRUSED + NOOPUSED)*log(NODISOPRUSED+NODISOPUSED)/log(2) 
+#Maintainability;FUNCTION,CLASS-METHOD;100-((NOINDPATHS+CYCLOMATIC)*0.23+log(HALSTEAD)*5.3);<0;<20
+#WARNING.SEVERITY=4 ERROR.SEVERITY=2 WARNING.CATEGORY="User Defined Warning Category 3" ERROR.CATEGORY="User Defined Error Category 3"
+#Number of statements (V);FUNCTION,CLASS-METHOD;NOSTAT;100;25
+#Number of arc (E);FUNCTION,CLASS-METHOD;CYCLOMATIC+NOSTAT-2;200;34
+#Conditional statements percent (NCNx);FUNCTION,CLASS-METHOD;(NOIF+NOLOOPS)/NOSTAT;0.75;0.34
+#Number of unique calls (UCT);FUNCTION,CLASS-METHOD;NOCALLS;20;15
