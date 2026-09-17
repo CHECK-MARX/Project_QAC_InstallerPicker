@@ -3425,7 +3425,7 @@ public partial class MainViewModel : ObservableObject
                 record.Id = await _databaseService.InsertTransferItemAsync(record);
                 var vm = new TransferItemViewModel(record, TransferManager);
                 RegisterTransferItem(vm);
-                TransferItems.Add(vm);
+                TransferItems.Insert(0, vm);
                 await TransferManager.StartAsync(vm);
             }
         }
@@ -4284,7 +4284,7 @@ public partial class MainViewModel : ObservableObject
 
                     zipVm = new TransferItemViewModel(zipRecord, TransferManager);
                     RegisterTransferItem(zipVm);
-                    TransferItems.Add(zipVm);
+                    TransferItems.Insert(0, zipVm);
 
                     zipVm.PrepareForStart();
                     zipVm.SetStatus(TransferStatus.Downloading);
@@ -9351,5 +9351,4 @@ public partial class MainViewModel : ObservableObject
         return string.Join(Environment.NewLine, lines);
     }
 }
-
 

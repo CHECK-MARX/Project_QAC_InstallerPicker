@@ -264,7 +264,7 @@ SELECT t.id, t.batch_id, t.logical_key, t.asset_source_path, t.dest_path, t.size
        COALESCE(t.company, b.company) AS company
 FROM transfer_items t
 LEFT JOIN batches b ON b.id = t.batch_id
-ORDER BY t.id;
+ORDER BY t.id DESC;
 ";
         await using var reader = await command.ExecuteReaderAsync();
         while (await reader.ReadAsync())
