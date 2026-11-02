@@ -5,6 +5,8 @@ VisualStudioVersion = 17.0.31903.59
 MinimumVisualStudioVersion = 10.0.40219.1
 Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "QACInstallerPicker.App", "QACInstallerPicker.App\QACInstallerPicker.App.csproj", "{FF8AF851-B241-43B4-BDE3-CE74E16C4F55}"
 EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "QACInstallerPicker.Tests", "QACInstallerPicker.Tests\QACInstallerPicker.Tests.csproj", "{D4A826C8-A5A3-4440-8BD7-DB6ECCB073A0}"
+EndProject
 Global
 	GlobalSection(SolutionConfigurationPlatforms) = preSolution
 		Debug|Any CPU = Debug|Any CPU
@@ -27,6 +29,18 @@ Global
 		{FF8AF851-B241-43B4-BDE3-CE74E16C4F55}.Release|x64.Build.0 = Release|Any CPU
 		{FF8AF851-B241-43B4-BDE3-CE74E16C4F55}.Release|x86.ActiveCfg = Release|Any CPU
 		{FF8AF851-B241-43B4-BDE3-CE74E16C4F55}.Release|x86.Build.0 = Release|Any CPU
+		{D4A826C8-A5A3-4440-8BD7-DB6ECCB073A0}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{D4A826C8-A5A3-4440-8BD7-DB6ECCB073A0}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{D4A826C8-A5A3-4440-8BD7-DB6ECCB073A0}.Debug|x64.ActiveCfg = Debug|Any CPU
+		{D4A826C8-A5A3-4440-8BD7-DB6ECCB073A0}.Debug|x64.Build.0 = Debug|Any CPU
+		{D4A826C8-A5A3-4440-8BD7-DB6ECCB073A0}.Debug|x86.ActiveCfg = Debug|Any CPU
+		{D4A826C8-A5A3-4440-8BD7-DB6ECCB073A0}.Debug|x86.Build.0 = Debug|Any CPU
+		{D4A826C8-A5A3-4440-8BD7-DB6ECCB073A0}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{D4A826C8-A5A3-4440-8BD7-DB6ECCB073A0}.Release|Any CPU.Build.0 = Release|Any CPU
+		{D4A826C8-A5A3-4440-8BD7-DB6ECCB073A0}.Release|x64.ActiveCfg = Release|Any CPU
+		{D4A826C8-A5A3-4440-8BD7-DB6ECCB073A0}.Release|x64.Build.0 = Release|Any CPU
+		{D4A826C8-A5A3-4440-8BD7-DB6ECCB073A0}.Release|x86.ActiveCfg = Release|Any CPU
+		{D4A826C8-A5A3-4440-8BD7-DB6ECCB073A0}.Release|x86.Build.0 = Release|Any CPU
 	EndGlobalSection
 	GlobalSection(SolutionProperties) = preSolution
 		HideSolutionNode = FALSE

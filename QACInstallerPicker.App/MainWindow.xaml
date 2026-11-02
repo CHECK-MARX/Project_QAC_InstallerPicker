@@ -24,6 +24,8 @@
                     <ColumnDefinition Width="Auto" />
                     <ColumnDefinition Width="Auto" />
                     <ColumnDefinition Width="Auto" />
+                    <ColumnDefinition Width="Auto" />
+                    <ColumnDefinition Width="Auto" />
                     <ColumnDefinition Width="*" />
                 </Grid.ColumnDefinitions>
 
@@ -39,7 +41,12 @@
                         Command="{Binding ImportBulkConfigExcelCommand}" />
                 <Button Grid.Column="5" Content="設定" Margin="0,0,8,0" Padding="10,4"
                         Command="{Binding OpenSettingsCommand}" />
-                <TextBlock Grid.Column="6" VerticalAlignment="Center" Text="{Binding SettingsSummary}" Foreground="#555" />
+                <Button Grid.Column="6" Content="版情報" Margin="0,0,8,0" Padding="10,4"
+                        Click="OpenBuildInfoButton_Click" />
+                <Button Grid.Column="7" Content="診断情報出力" Margin="0,0,8,0" Padding="10,4"
+                        Click="ExportDiagnosticsButton_Click" />
+                <TextBlock Grid.Column="8" VerticalAlignment="Center" Text="{Binding SettingsSummary}"
+                           TextTrimming="CharacterEllipsis" ToolTip="{Binding SettingsSummary}" Foreground="#555" />
             </Grid>
         </Border>
 
@@ -155,6 +162,7 @@
                                         <Button Content="タブ追加" Command="{Binding AddCustomTabCommand}" Margin="0,0,6,0" />
                                         <Button Content="タブ編集" Command="{Binding EditSelectedCustomTabCommand}" Margin="0,0,6,0" />
                                         <Button Content="タブ削除" Command="{Binding RemoveSelectedCustomTabCommand}" />
+                                        <Button Content="拡大表示" Margin="10,0,0,0" Click="OpenCustomTabPreviewButton_Click" />
                                     </StackPanel>
 
                                     <TabControl Grid.Row="1"
@@ -193,7 +201,26 @@
                                                                 Margin="0,0,6,0" />
                                                         <Button Content="配下追加"
                                                                 Command="{Binding DataContext.ScanCustomDirectoryCommand, RelativeSource={RelativeSource AncestorType=Window}}" />
-                                                        <TextBlock Text="一覧をダブルクリックで別ウィンドウのカスタム編集/プレビューを表示"
+                                                        <Button Content="検索中止" Margin="6,0,0,0"
+                                                                Command="{Binding DataContext.CancelCustomDirectoryScanCommand, RelativeSource={RelativeSource AncestorType=Window}}" />
+                                                        <TextBlock Text="{Binding DataContext.CustomDirectoryScanStatus, RelativeSource={RelativeSource AncestorType=Window}}"
+                                                                   VerticalAlignment="Center" Margin="8,0,0,0" />
+                                                        <TextBox Text="{Binding FilterText, UpdateSourceTrigger=PropertyChanged}"
+                                                                 Width="160" Margin="12,0,4,0" ToolTip="ファイル名、フォルダ、パスを検索" />
+                                                        <Button Content="一覧検索" Click="ApplyCustomTabFilterButton_Click" />
+                                                        <TextBlock Text="旧ルート" VerticalAlignment="Center" Margin="12,0,4,0" />
+                                                        <TextBox Text="{Binding DataContext.PathRepairOldRoot, RelativeSource={RelativeSource AncestorType=Window}, UpdateSourceTrigger=PropertyChanged}"
+                                                                 Width="210" ToolTip="移動前の共通フォルダ" />
+                                                        <TextBlock Text="新ルート" VerticalAlignment="Center" Margin="8,0,4,0" />
+                                                        <TextBox Text="{Binding DataContext.PathRepairNewRoot, RelativeSource={RelativeSource AncestorType=Window}, UpdateSourceTrigger=PropertyChanged}"
+                                                                 Width="210" ToolTip="移動後の共通フォルダ" />
+                                                        <Button Content="修復確認" Margin="6,0,0,0"
+                                                                Command="{Binding DataContext.PreviewCustomPathRepairCommand, RelativeSource={RelativeSource AncestorType=Window}}" />
+                                                        <Button Content="パス修復" Margin="6,0,0,0"
+                                                                Click="ApplyCustomPathRepairButton_Click" />
+                                                        <TextBlock Text="{Binding DataContext.PathRepairStatus, RelativeSource={RelativeSource AncestorType=Window}}"
+                                                                   VerticalAlignment="Center" Margin="8,0,0,0" />
+                                                        <TextBlock Text="拡大表示ボタンまたはタブ見出しのダブルクリックで別ウィンドウを表示"
                                                                    VerticalAlignment="Center"
                                                                    Foreground="#666"
                                                                    Margin="12,0,0,0" />
@@ -224,6 +251,10 @@
                                     </TabControl>
                                 </Grid>
                             </GroupBox>
+                            <GridSplitter Grid.Row="0" Height="6" VerticalAlignment="Bottom"
+                                          HorizontalAlignment="Stretch" ResizeDirection="Rows"
+                                          ResizeBehavior="PreviousAndNext" Background="#D9D9D9"
+                                          ToolTip="ドラッグして製品一覧とカスタム選定タブの高さを調整" />
                         </Grid>
                     </DockPanel>
 
@@ -363,6 +394,7 @@
                             <Grid.RowDefinitions>
                                 <RowDefinition Height="Auto" />
                                 <RowDefinition Height="Auto" />
+                                <RowDefinition Height="Auto" />
                             </Grid.RowDefinitions>
 
                             <Grid Grid.Row="0">
@@ -406,6 +438,24 @@
                                         Margin="8,0,0,0"
                                         Padding="10,4"
                                         Command="{Binding ApplySelectionStateHistoryCommand}" />
+                            </StackPanel>
+                            <StackPanel Grid.Row="2" Orientation="Horizontal" Margin="0,8,0,0">
+                                <TextBlock Text="名前付き選定セット" VerticalAlignment="Center" Margin="0,0,8,0" />
+                                <TextBox Width="180" Text="{Binding SavedSelectionSetName, UpdateSourceTrigger=PropertyChanged}"
+                                         ToolTip="保存するセットの名前" />
+                                <Button Content="現在の選定を保存" Margin="6,0,12,0" Padding="10,4"
+                                        Command="{Binding SaveNamedSelectionSetCommand}" />
+                                <ComboBox Width="260" ItemsSource="{Binding SavedSelectionSetEntries}"
+                                          SelectedItem="{Binding SelectedSavedSelectionSet}"
+                                          DisplayMemberPath="DisplayName" />
+                                <Button Content="呼び出し" Margin="6,0,0,0" Padding="10,4"
+                                        Command="{Binding ApplyNamedSelectionSetCommand}" />
+                                <Button Content="削除" Margin="6,0,0,0" Padding="10,4"
+                                        Command="{Binding DeleteNamedSelectionSetCommand}" />
+                                <Button Content="選定明細を出力" Margin="16,0,0,0" Padding="10,4"
+                                        Command="{Binding ExportSelectionManifestCommand}" />
+                                <Button Content="前回明細との差分" Margin="6,0,0,0" Padding="10,4"
+                                        Command="{Binding ExportSelectionManifestDiffCommand}" />
                             </StackPanel>
                         </Grid>
                     </Border>
@@ -501,7 +551,7 @@
                         <TextBlock Text="{Binding TransferSummary.ConcurrentText}" />
                     </StackPanel>
 
-                    <DataGrid Grid.Row="1" ItemsSource="{Binding TransferItems}" AutoGenerateColumns="False" CanUserAddRows="False">
+                    <DataGrid Grid.Row="1" ItemsSource="{Binding TransferItems}" AutoGenerateColumns="False" CanUserAddRows="False" IsReadOnly="True">
                         <DataGrid.Columns>
                             <DataGridTextColumn Header="状態" Binding="{Binding Status}" Width="100" />
                             <DataGridTextColumn Header="会社名" Binding="{Binding Company}" Width="140" />
@@ -569,7 +619,7 @@
                         <Button Content="選択削除" Command="{Binding ClearHistoryCommand}" />
                     </StackPanel>
 
-                    <DataGrid Grid.Row="1" ItemsSource="{Binding HistoryItems}" AutoGenerateColumns="False" CanUserAddRows="False">
+                    <DataGrid Grid.Row="1" ItemsSource="{Binding HistoryItems}" AutoGenerateColumns="False" CanUserAddRows="False" IsReadOnly="True">
                         <DataGrid.Columns>
                             <DataGridTemplateColumn Header="選択" Width="60">
                                 <DataGridTemplateColumn.CellTemplate>

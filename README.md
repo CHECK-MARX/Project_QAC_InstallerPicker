@@ -15,10 +15,15 @@ Helix QAC の配布作業を効率化するための Windows デスクトップ�
   - 論理アイテムと実体ファイルの分離表示
 - 選定
   - モジュール選択 (全選択/全解除)
-  - カスタム選定タブ (タブ追加・編集・削除、ファイル/フォルダ追加)
+  - カスタム選定タブ (タブ追加・編集・削除、ファイル/フォルダ追加、一覧検索、拡大表示)
+  - 配下ファイルの検索・追加は進捗表示と中止に対応
   - プレビュー (選択一覧)、メール貼り付け用リスト作成
   - 選定履歴 (最新5件) の呼び出し
+  - 名前付き選定セットの保存・呼び出し・削除
+  - カスタムファイルの旧ルートから新ルートへのパス修復
+  - 選定明細 JSON と前回明細との差分 CSV の出力
 - 転送
+  - キュー追加前に元ファイルの有無、出力先の重複、空き容量を確認
   - キュー実行、進捗表示、Pause / Resume / Cancel / Retry
   - `.part` によるレジューム
   - SHA-256 ハッシュ検証 (コピー整合性確認)
@@ -37,6 +42,8 @@ Helix QAC の配布作業を効率化するための Windows デスクトップ�
 - 設定 Excel 出力/取込
   - `一括設定` シートへ現在の選定内容を書き出し
   - 編集済み `一括設定` シートの取り込み
+- 診断情報出力
+  - ビルド情報、実行環境、ログ末尾をテキストに保存
 
 ## 画面構成
 
@@ -76,6 +83,12 @@ dotnet build Project_QACInstallerPicker.sln -c Debug
 
 ```powershell
 dotnet run --project .\QACInstallerPicker.App\QACInstallerPicker.App.csproj
+```
+
+### 回帰検証
+
+```powershell
+dotnet run --project .\QACInstallerPicker.Tests\QACInstallerPicker.Tests.csproj -c Release
 ```
 
 ### 発行 (Release, 単体 EXE)

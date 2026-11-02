@@ -10,17 +10,35 @@ namespace QACInstallerPicker.App.Services;
 
 public class SettingsService
 {
+    private readonly string _settingsPath;
+
+    public SettingsService(string? settingsPath = null)
+    {
+        _settingsPath = settingsPath ?? AppPaths.SettingsPath;
+    }
+
     public SettingsModel Load()
     {
-        if (!File.Exists(AppPaths.SettingsPath))
+        if (!File.Exists(_settingsPath))
         {
             var defaults = new SettingsModel();
             Save(defaults);
             return defaults;
         }
 
-        var json = File.ReadAllText(AppPaths.SettingsPath);
-        var settings = JsonSerializer.Deserialize<SettingsModel>(json) ?? new SettingsModel();
+        SettingsModel settings;
+        try
+        {
+            settings = ReadSettings(_settingsPath);
+        }
+        catch (JsonException ex) when (File.Exists(_settingsPath + ".bak"))
+        {
+            settings = ReadSettings(_settingsPath + ".bak");
+            var damagedPath = _settingsPath + ".damaged-" + DateTime.UtcNow.ToString("yyyyMMddHHmmssfff");
+            File.Move(_settingsPath, damagedPath);
+            File.Copy(_settingsPath + ".bak", _settingsPath);
+            AppLogger.LogError($"SettingsRecoveredFromBackup:{damagedPath}", ex);
+        }
         if (settings.MaxConcurrentTransfers <= 0)
         {
             settings.MaxConcurrentTransfers = 2;
@@ -34,6 +52,7 @@ public class SettingsService
         settings.CustomTabStates ??= new();
         settings.CustomZipPlans ??= new();
         settings.SelectionStateHistory ??= new();
+        settings.SavedSelectionSets ??= new();
         settings.MemoLearnedSynonyms = NormalizeMemoLearnedSynonyms(settings.MemoLearnedSynonyms);
         settings.MemoLearnedCompanyAliases = NormalizeMemoLearnedCompanyAliases(settings.MemoLearnedCompanyAliases);
         settings.MemoLatestVersionHints = NormalizeMemoLatestVersionHints(settings.MemoLatestVersionHints);
@@ -49,7 +68,38 @@ public class SettingsService
     public void Save(SettingsModel settings)
     {
         var json = JsonSerializer.Serialize(settings, new JsonSerializerOptions { WriteIndented = true });
-        File.WriteAllText(AppPaths.SettingsPath, json);
+        var directory = Path.GetDirectoryName(_settingsPath);
+        if (!string.IsNullOrWhiteSpace(directory))
+        {
+            Directory.CreateDirectory(directory);
+        }
+        var temporaryPath = _settingsPath + ".tmp-" + Guid.NewGuid().ToString("N");
+        try
+        {
+            File.WriteAllText(temporaryPath, json);
+            _ = ReadSettings(temporaryPath);
+            if (File.Exists(_settingsPath))
+            {
+                File.Replace(temporaryPath, _settingsPath, _settingsPath + ".bak");
+            }
+            else
+            {
+                File.Move(temporaryPath, _settingsPath);
+            }
+        }
+        finally
+        {
+            if (File.Exists(temporaryPath))
+            {
+                File.Delete(temporaryPath);
+            }
+        }
+    }
+
+    private static SettingsModel ReadSettings(string path)
+    {
+        return JsonSerializer.Deserialize<SettingsModel>(File.ReadAllText(path))
+            ?? throw new JsonException($"設定ファイルが空です: {path}");
     }
 
     private static Dictionary<string, List<string>> NormalizeMemoLearnedSynonyms(

@@ -21,9 +21,12 @@ public class HashService
         long size,
         DateTime lastWriteUtc,
         IProgress<long>? progress,
-        CancellationToken cancellationToken)
+        CancellationToken cancellationToken,
+        bool forceRecalculate = false)
     {
-        var cached = await _database.TryGetHashCacheAsync(sourcePath, size, lastWriteUtc);
+        var cached = forceRecalculate
+            ? null
+            : await _database.TryGetHashCacheAsync(sourcePath, size, lastWriteUtc);
         if (!string.IsNullOrWhiteSpace(cached))
         {
             return (cached, true);

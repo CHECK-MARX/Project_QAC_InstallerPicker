@@ -16,6 +16,7 @@ public class SettingsModel
     public List<CustomTabState> CustomTabStates { get; set; } = new();
     public List<CustomZipPlan> CustomZipPlans { get; set; } = new();
     public List<SelectionStateHistoryEntry> SelectionStateHistory { get; set; } = new();
+    public List<SelectionStateHistoryEntry> SavedSelectionSets { get; set; } = new();
     public Dictionary<string, List<string>> MemoLearnedSynonyms { get; set; } = new();
     public Dictionary<string, string> MemoLearnedCompanyAliases { get; set; } = new();
     public List<string> MemoLatestVersionHints { get; set; } = new();

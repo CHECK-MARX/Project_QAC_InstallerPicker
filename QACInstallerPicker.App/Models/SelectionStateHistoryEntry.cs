@@ -36,5 +36,6 @@ public class SelectionScanState
 public class SelectionCustomTabState
 {
     public string TabName { get; set; } = string.Empty;
+    public string ColumnsInput { get; set; } = string.Empty;
     public List<string> SelectedSourcePaths { get; set; } = new();
 }

@@ -26,7 +26,7 @@ public class TransferManager
     private readonly object _concurrencyLock = new();
     private int _maxConcurrent;
     private int _pendingReduction;
-    private readonly ConcurrentDictionary<long, Task> _running = new();
+    private readonly ConcurrentDictionary<long, byte> _running = new();
     private readonly object _queueLock = new();
     private readonly LinkedList<TransferItemViewModel> _pendingQueue = new();
     private readonly Dictionary<long, LinkedListNode<TransferItemViewModel>> _pendingIndex = new();
@@ -123,7 +123,26 @@ public class TransferManager
 
     public Task RetryAsync(TransferItemViewModel item)
     {
+        // A hash mismatch means the existing .part contents cannot be trusted.
+        // Keep interrupted copies for resume, but restart corrupted copies.
+        if (string.Equals(item.Record.ErrorReason, "HashMismatch", StringComparison.Ordinal))
+        {
+            var partPath = item.Record.DestPath + ".part";
+            if (File.Exists(partPath))
+            {
+                File.Delete(partPath);
+            }
+            item.Record.SourceHashSha256 = null;
+            item.ForceSourceRehash = true;
+        }
         item.ResetForRetry();
+        if (_running.ContainsKey(item.Record.Id))
+        {
+            // Failure can be visible before the previous worker releases its slot.
+            // Queue the retry so that worker's finally block starts it.
+            EnqueuePending(item, prioritize: true);
+            return Task.CompletedTask;
+        }
         return StartAsync(item);
     }
 
@@ -245,8 +264,19 @@ public class TransferManager
                 continue;
             }
 
-            var task = Task.Run(() => RunTransferAsync(next));
-            _running[next.Record.Id] = task;
+            // Register before scheduling: an immediate failure may finish before
+            // Task.Run returns and would otherwise leave a stale running entry.
+            _running[next.Record.Id] = 0;
+            try
+            {
+                _ = Task.Run(() => RunTransferAsync(next));
+            }
+            catch
+            {
+                _running.TryRemove(next.Record.Id, out _);
+                _semaphore.Release();
+                throw;
+            }
         }
     }
 
@@ -308,9 +338,11 @@ public class TransferManager
                 record.Size,
                 record.SourceLastWriteTimeUtc,
                 hashProgress,
-                item.CancellationToken);
+                item.CancellationToken,
+                item.ForceSourceRehash);
 
             record.SourceHashSha256 = sourceHash;
+            item.ForceSourceRehash = false;
             item.UpdateSourceHashStatus(fromCache ? "Cached" : "Calculated");
             await _database.UpdateTransferItemAsync(record);
         }
@@ -335,7 +367,7 @@ public class TransferManager
         CopyResult copyResult;
         try
         {
-        copyResult = await _copyService.CopyWithResumeAsync(
+            copyResult = await _copyService.CopyWithResumeAsync(
             sourcePath,
             record.DestPath,
             record.Size,
@@ -380,10 +412,21 @@ public class TransferManager
             var finalPartPath = copyResult.PartPath;
             if (File.Exists(finalPath))
             {
-                File.Delete(finalPath);
+                var backupPath = finalPath + ".previous-" + Guid.NewGuid().ToString("N");
+                File.Replace(finalPartPath, finalPath, backupPath);
+                try
+                {
+                    File.Delete(backupPath);
+                }
+                catch (Exception cleanupEx)
+                {
+                    AppLogger.LogError("TransferBackupCleanup", cleanupEx);
+                }
             }
-
-            File.Move(finalPartPath, finalPath);
+            else
+            {
+                File.Move(finalPartPath, finalPath);
+            }
         }
         catch (Exception ex)
         {

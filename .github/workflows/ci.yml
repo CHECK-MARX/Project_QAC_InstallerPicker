@@ -34,6 +34,9 @@ jobs:
       - name: Build
         run: dotnet build Project_QACInstallerPicker.sln -c Release --no-restore
 
+      - name: Regression checks
+        run: dotnet run --project QACInstallerPicker.Tests/QACInstallerPicker.Tests.csproj -c Release --no-restore
+
       - name: Publish
         run: dotnet publish QACInstallerPicker.App/QACInstallerPicker.App.csproj -c Release -r win-x64 -o artifacts/publish --no-restore
 

@@ -1,6 +1,7 @@
 using System;
 using System.ComponentModel;
 using System.Drawing;
+using System.IO;
 using System.Linq;
 using System.Threading.Tasks;
 using System.Windows;
@@ -9,10 +10,12 @@ using System.Windows.Controls.Primitives;
 using System.Windows.Input;
 using System.Windows.Media;
 using System.Windows.Threading;
+using QACInstallerPicker.App.Helpers;
 using QACInstallerPicker.App.Services;
 using QACInstallerPicker.App.ViewModels;
 using QACInstallerPicker.App.Views;
 using Forms = System.Windows.Forms;
+using WpfMessageBox = System.Windows.MessageBox;
 
 namespace QACInstallerPicker.App;
 
@@ -24,10 +27,14 @@ public partial class MainWindow : Window
     private CustomTabPreviewWindow? _customTabPopupWindow;
     private bool _isInTray;
 
-    public MainWindow()
+    public MainWindow() : this(new MainViewModel(), initializeOnLoaded: true)
+    {
+    }
+
+    public MainWindow(MainViewModel viewModel, bool initializeOnLoaded)
     {
         InitializeComponent();
-        _viewModel = new MainViewModel();
+        _viewModel = viewModel;
         DataContext = _viewModel;
         _viewModel.RequestOpenSettings += (_, _) => OpenSettingsDialog();
         _viewModel.RequestNotification += ShowTransferNotification;
@@ -38,7 +45,10 @@ public partial class MainWindow : Window
             args.Handled = true;
             HideToTray();
         }));
-        Loaded += MainWindow_Loaded;
+        if (initializeOnLoaded)
+        {
+            Loaded += MainWindow_Loaded;
+        }
         StateChanged += MainWindow_StateChanged;
         Closing += MainWindow_Closing;
     }
@@ -246,8 +256,92 @@ public partial class MainWindow : Window
             return;
         }
 
-        OpenCustomTabPopupWindow();
+        OpenCustomTabPopupWindow(dataGrid);
         e.Handled = true;
+    }
+
+    private void OpenCustomTabPreviewButton_Click(object sender, RoutedEventArgs e)
+    {
+        OpenCustomTabPopupWindow();
+    }
+
+    private void ApplyCustomPathRepairButton_Click(object sender, RoutedEventArgs e)
+    {
+        var selected = _viewModel.SelectedCustomTab;
+        var grid = selected == null ? null : FindCustomTabGrid(this, selected);
+        if (grid != null &&
+            (!grid.CommitEdit(DataGridEditingUnit.Cell, true) ||
+             !grid.CommitEdit(DataGridEditingUnit.Row, true)))
+        {
+            WpfMessageBox.Show(this, "編集中の値を確定してからパスを修復してください。", "入力の確認",
+                MessageBoxButton.OK, MessageBoxImage.Information);
+            return;
+        }
+        _viewModel.ApplyCustomPathRepairCommand.Execute(null);
+    }
+
+    private void OpenBuildInfoButton_Click(object sender, RoutedEventArgs e)
+    {
+        var buildInfoPath = Path.Combine(AppContext.BaseDirectory, "BUILD_INFO.txt");
+        var details = $"アプリ: {_viewModel.AppTitle}";
+        try
+        {
+            details += File.Exists(buildInfoPath)
+                ? Environment.NewLine + File.ReadAllText(buildInfoPath)
+                : Environment.NewLine + "ビルド情報ファイルはありません。";
+        }
+        catch (IOException ex)
+        {
+            AppLogger.LogError("ReadBuildInfo", ex);
+            details += Environment.NewLine + "ビルド情報を読み込めませんでした。";
+        }
+        WpfMessageBox.Show(this, details, "版情報", MessageBoxButton.OK, MessageBoxImage.Information);
+    }
+
+    private void ExportDiagnosticsButton_Click(object sender, RoutedEventArgs e)
+    {
+        var dialog = new Microsoft.Win32.SaveFileDialog
+        {
+            Filter = "テキスト (*.txt)|*.txt",
+            FileName = $"QAC診断情報_{DateTime.Now:yyyyMMdd_HHmm}.txt"
+        };
+        if (dialog.ShowDialog(this) != true)
+        {
+            return;
+        }
+        try
+        {
+            var report = DiagnosticsService.BuildReport(
+                _viewModel.AppTitle,
+                Path.Combine(AppContext.BaseDirectory, "BUILD_INFO.txt"),
+                AppPaths.LogPath);
+            DiagnosticsService.Save(dialog.FileName, report);
+            WpfMessageBox.Show(this, "診断情報を出力しました。", "診断情報",
+                MessageBoxButton.OK, MessageBoxImage.Information);
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+        {
+            AppLogger.LogError("ExportDiagnostics", ex);
+            WpfMessageBox.Show(this, ex.Message, "診断情報の出力に失敗", MessageBoxButton.OK, MessageBoxImage.Warning);
+        }
+    }
+
+    private void ApplyCustomTabFilterButton_Click(object sender, RoutedEventArgs e)
+    {
+        if (sender is not FrameworkElement { DataContext: CustomTabViewModel tab })
+        {
+            return;
+        }
+        var grid = FindCustomTabGrid(this, tab);
+        if (grid != null &&
+            (!grid.CommitEdit(DataGridEditingUnit.Cell, true) ||
+             !grid.CommitEdit(DataGridEditingUnit.Row, true)))
+        {
+            WpfMessageBox.Show(this, "編集中の値を確定してから検索してください。", "入力の確認",
+                MessageBoxButton.OK, MessageBoxImage.Information);
+            return;
+        }
+        tab.ApplyFilter();
     }
 
     private void ModulesDataGrid_MouseDoubleClick(object sender, MouseButtonEventArgs e)
@@ -321,25 +415,100 @@ public partial class MainWindow : Window
 
     private void OpenCustomTabPopupWindow()
     {
-        if (_customTabPopupWindow == null)
+        OpenCustomTabPopupWindow(null);
+    }
+
+    private void OpenCustomTabPopupWindow(DataGrid? sourceGrid)
+    {
+        if (_viewModel.SelectedCustomTab == null)
         {
-            _customTabPopupWindow = new CustomTabPreviewWindow(_viewModel)
-            {
-                Owner = this
-            };
-            _customTabPopupWindow.Closed += (_, _) => _customTabPopupWindow = null;
-            _customTabPopupWindow.Show();
-            _customTabPopupWindow.Activate();
             return;
         }
 
-        _customTabPopupWindow.RefreshPreview();
-        if (!_customTabPopupWindow.IsVisible)
+        // The preview binds to the same DataView. Its ItemsSource cannot attach while
+        // the main grid still has an active row edit transaction.
+        sourceGrid ??= FindCustomTabGrid(this, _viewModel.SelectedCustomTab);
+        if (sourceGrid != null &&
+            (!sourceGrid.CommitEdit(DataGridEditingUnit.Cell, true) ||
+             !sourceGrid.CommitEdit(DataGridEditingUnit.Row, true)))
         {
-            _customTabPopupWindow.Show();
+            WpfMessageBox.Show(this, "編集中の値を確定してから拡大表示を開いてください。", "入力の確認",
+                MessageBoxButton.OK, MessageBoxImage.Information);
+            return;
         }
 
-        _customTabPopupWindow.Activate();
+        if (_customTabPopupWindow == null)
+        {
+            CustomTabPreviewWindow? window = null;
+            try
+            {
+                window = new CustomTabPreviewWindow(_viewModel) { Owner = this };
+                window.Closed += CustomTabPopupWindow_Closed;
+                window.Show();
+                _customTabPopupWindow = window;
+                window.Activate();
+            }
+            catch (Exception ex)
+            {
+                AppLogger.LogError("OpenCustomTabPreview", ex);
+                if (window != null)
+                {
+                    window.Closed -= CustomTabPopupWindow_Closed;
+                    window.ReleaseHandlers();
+                    window.Close();
+                }
+                _customTabPopupWindow = null;
+                WpfMessageBox.Show(this, "拡大表示を開けませんでした。編集中の値を確定して、もう一度お試しください。",
+                    "拡大表示", MessageBoxButton.OK, MessageBoxImage.Warning);
+            }
+            return;
+        }
+
+        try
+        {
+            _customTabPopupWindow.RefreshPreview();
+            if (_customTabPopupWindow.WindowState == WindowState.Minimized)
+            {
+                _customTabPopupWindow.WindowState = WindowState.Normal;
+            }
+            _customTabPopupWindow.Activate();
+        }
+        catch (Exception ex)
+        {
+            AppLogger.LogError("RefreshCustomTabPreview", ex);
+            WpfMessageBox.Show(this, "拡大表示の更新に失敗しました。編集中の値を確定して、もう一度お試しください。",
+                "拡大表示", MessageBoxButton.OK, MessageBoxImage.Warning);
+        }
+    }
+
+    private void CustomTabPopupWindow_Closed(object? sender, EventArgs e)
+    {
+        if (sender is CustomTabPreviewWindow window)
+        {
+            window.Closed -= CustomTabPopupWindow_Closed;
+            if (ReferenceEquals(_customTabPopupWindow, window))
+            {
+                _customTabPopupWindow = null;
+            }
+        }
+    }
+
+    private static DataGrid? FindCustomTabGrid(DependencyObject parent, CustomTabViewModel tab)
+    {
+        for (var index = 0; index < VisualTreeHelper.GetChildrenCount(parent); index++)
+        {
+            var child = VisualTreeHelper.GetChild(parent, index);
+            if (child is DataGrid grid && ReferenceEquals(grid.DataContext, tab))
+            {
+                return grid;
+            }
+            var found = FindCustomTabGrid(child, tab);
+            if (found != null)
+            {
+                return found;
+            }
+        }
+        return null;
     }
 
     private void OpenMemoEditorButton_Click(object sender, RoutedEventArgs e)

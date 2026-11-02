@@ -42,6 +42,7 @@ public partial class TransferItemViewModel : ObservableObject
     public string DestPath => Record.DestPath;
 
     public TransferActionRequest RequestedAction { get; set; }
+    public bool ForceSourceRehash { get; set; }
 
     public CancellationToken CancellationToken => _cts?.Token ?? CancellationToken.None;
 
@@ -102,7 +103,11 @@ public partial class TransferItemViewModel : ObservableObject
     [RelayCommand]
     private async Task Resume()
     {
-        if (Status is TransferStatus.Paused or TransferStatus.Failed or TransferStatus.Queued)
+        if (Status == TransferStatus.Failed)
+        {
+            await _manager.RetryAsync(this);
+        }
+        else if (Status is TransferStatus.Paused or TransferStatus.Queued)
         {
             await _manager.StartAsync(this, Status == TransferStatus.Paused);
         }

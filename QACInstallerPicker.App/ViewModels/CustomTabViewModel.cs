@@ -50,7 +50,33 @@ public partial class CustomTabViewModel : ObservableObject
     [ObservableProperty]
     private string _newDirectoryPath = string.Empty;
 
+    [ObservableProperty]
+    private string _filterText = string.Empty;
+
     public DataView RowsView => _table.DefaultView;
+
+    public void ApplyFilter()
+    {
+        var value = FilterText.Trim();
+        if (value.Length == 0)
+        {
+            RowsView.RowFilter = string.Empty;
+            return;
+        }
+
+        var escaped = string.Concat(value.Select(character => character switch
+        {
+            '[' => "[[]",
+            ']' => "[]]",
+            '%' => "[%]",
+            '*' => "[*]",
+            '\'' => "''",
+            _ => character.ToString()
+        }));
+        RowsView.RowFilter = $"[{FolderColumnName}] LIKE '%{escaped}%' OR " +
+                             $"[{FileNameColumnName}] LIKE '%{escaped}%' OR " +
+                             $"[{SourcePathColumnName}] LIKE '%{escaped}%'";
+    }
 
     public event EventHandler? Changed;
 
@@ -98,6 +124,7 @@ public partial class CustomTabViewModel : ObservableObject
         }
 
         OnPropertyChanged(nameof(RowsView));
+        ApplyFilter();
         Changed?.Invoke(this, EventArgs.Empty);
     }
 
@@ -187,6 +214,48 @@ public partial class CustomTabViewModel : ObservableObject
             row.Field<string>(SourcePathColumnName),
             sourcePath,
             StringComparison.OrdinalIgnoreCase));
+    }
+
+    public IReadOnlyList<string> GetAllSourcePaths() => _table.Rows.Cast<DataRow>()
+        .Select(row => row.Field<string>(SourcePathColumnName) ?? string.Empty)
+        .Where(path => path.Length > 0)
+        .ToList();
+
+    public bool CanReplaceSourcePaths(IReadOnlyDictionary<string, string> replacements)
+    {
+        var projected = GetAllSourcePaths()
+            .Select(path => replacements.TryGetValue(path, out var replacement) ? replacement : path);
+        return projected.Distinct(StringComparer.OrdinalIgnoreCase).Count() == _table.Rows.Count;
+    }
+
+    public int ReplaceSourcePaths(IReadOnlyDictionary<string, string> replacements)
+    {
+        if (!CanReplaceSourcePaths(replacements))
+        {
+            throw new InvalidOperationException("修復後のパスがタブ内で重複します。");
+        }
+        var changed = 0;
+        RunWithoutChangedNotification(() =>
+        {
+            foreach (var row in _table.Rows.Cast<DataRow>())
+            {
+                var oldPath = row.Field<string>(SourcePathColumnName) ?? string.Empty;
+                if (!replacements.TryGetValue(oldPath, out var newPath))
+                {
+                    continue;
+                }
+                row[SourcePathColumnName] = newPath;
+                row[FolderColumnName] = GetNearestFolderName(newPath);
+                row[FileNameColumnName] = Path.GetFileName(newPath);
+                changed++;
+            }
+        });
+        if (changed > 0)
+        {
+            Changed?.Invoke(this, EventArgs.Empty);
+            ApplyFilter();
+        }
+        return changed;
     }
 
     public void ClearSelection()

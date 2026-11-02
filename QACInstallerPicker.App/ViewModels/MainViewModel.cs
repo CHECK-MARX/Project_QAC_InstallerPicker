@@ -38,6 +38,7 @@ public partial class MainViewModel : ObservableObject
     private readonly CopyService _copyService;
     private readonly ShipmentHistoryExcelService _shipmentHistoryExcelService;
     private TransferManager? _transferManager;
+    private CancellationTokenSource? _customScanCancellation;
 
     private CompatibilityData? _compatibility;
     private Dictionary<string, List<string>> _synonyms = new(StringComparer.OrdinalIgnoreCase);
@@ -233,15 +234,15 @@ public partial class MainViewModel : ObservableObject
         "1年"
     ];
 
-    public MainViewModel()
+    public MainViewModel(SettingsService? settingsService = null, DatabaseService? databaseService = null)
     {
-        _settingsService = new SettingsService();
+        _settingsService = settingsService ?? new SettingsService();
         _excelService = new ExcelService();
         _bulkSelectionExcelService = new BulkSelectionExcelService();
         _scanService = new InstallerScanService();
         _memoService = new MemoParserService();
         _localLlmDecisionService = new LocalLlmDecisionService();
-        _databaseService = new DatabaseService();
+        _databaseService = databaseService ?? new DatabaseService();
         _hashService = new HashService(_databaseService);
         _copyService = new CopyService();
         _shipmentHistoryExcelService = new ShipmentHistoryExcelService();
@@ -264,6 +265,7 @@ public partial class MainViewModel : ObservableObject
         ScanSelectionItems = new ObservableCollection<ScanSelectionItemViewModel>();
         CustomTabs = new ObservableCollection<CustomTabViewModel>();
         SelectionStateHistoryEntries = new ObservableCollection<SelectionStateHistoryEntry>();
+        SavedSelectionSetEntries = new ObservableCollection<SelectionStateHistoryEntry>();
         ShipmentHistoryItems = new ObservableCollection<BasketItemViewModel>();
         ShipmentHistoryViewItems = new ObservableCollection<ShipmentHistoryRecord>();
         ShipmentHistoryCompanyMultiFilterOptions = new ObservableCollection<FilterCheckItemViewModel>();
@@ -287,6 +289,7 @@ public partial class MainViewModel : ObservableObject
 
         RestoreCustomStateFromSettings();
         LoadSelectionStateHistoryFromSettings();
+        LoadSavedSelectionSetsFromSettings();
     }
 
     public ObservableCollection<HelixVersionViewModel> HelixVersions { get; }
@@ -303,6 +306,7 @@ public partial class MainViewModel : ObservableObject
     public ObservableCollection<ScanSelectionItemViewModel> ScanSelectionItems { get; }
     public ObservableCollection<CustomTabViewModel> CustomTabs { get; }
     public ObservableCollection<SelectionStateHistoryEntry> SelectionStateHistoryEntries { get; }
+    public ObservableCollection<SelectionStateHistoryEntry> SavedSelectionSetEntries { get; }
     public ObservableCollection<BasketItemViewModel> ShipmentHistoryItems { get; }
     public ObservableCollection<ShipmentHistoryRecord> ShipmentHistoryViewItems { get; }
     public ObservableCollection<FilterCheckItemViewModel> ShipmentHistoryCompanyMultiFilterOptions { get; }
@@ -445,6 +449,12 @@ public partial class MainViewModel : ObservableObject
     private CustomTabViewModel? _selectedCustomTab;
 
     [ObservableProperty]
+    private bool _isCustomDirectoryScanInProgress;
+
+    [ObservableProperty]
+    private string _customDirectoryScanStatus = string.Empty;
+
+    [ObservableProperty]
     private string _newCustomTabName = "カスタム";
 
     [ObservableProperty]
@@ -452,6 +462,21 @@ public partial class MainViewModel : ObservableObject
 
     [ObservableProperty]
     private SelectionStateHistoryEntry? _selectedSelectionStateHistoryEntry;
+
+    [ObservableProperty]
+    private SelectionStateHistoryEntry? _selectedSavedSelectionSet;
+
+    [ObservableProperty]
+    private string _savedSelectionSetName = string.Empty;
+
+    [ObservableProperty]
+    private string _pathRepairOldRoot = string.Empty;
+
+    [ObservableProperty]
+    private string _pathRepairNewRoot = string.Empty;
+
+    [ObservableProperty]
+    private string _pathRepairStatus = string.Empty;
 
     [ObservableProperty]
     private BasketItemViewModel? _selectedShipmentHistoryItem;
@@ -653,6 +678,7 @@ public partial class MainViewModel : ObservableObject
         LoadMemoUnresolvedHistoryFromSettings();
         RestoreCustomStateFromSettings();
         LoadSelectionStateHistoryFromSettings();
+        LoadSavedSelectionSetsFromSettings();
         if (TransferItems.Count == 0)
         {
             _transferManager = null;
@@ -2964,15 +2990,20 @@ public partial class MainViewModel : ObservableObject
     }
 
     [RelayCommand]
-    private void ScanCustomDirectory()
+    private async Task ScanCustomDirectory()
     {
+        if (IsCustomDirectoryScanInProgress)
+        {
+            return;
+        }
         if (SelectedCustomTab == null)
         {
             WpfMessageBox.Show("先にカスタムタブを追加してください。", "情報不足", MessageBoxButton.OK, MessageBoxImage.Information);
             return;
         }
 
-        var root = SelectedCustomTab.NewDirectoryPath?.Trim() ?? string.Empty;
+        var tab = SelectedCustomTab;
+        var root = tab.NewDirectoryPath?.Trim() ?? string.Empty;
         if (string.IsNullOrWhiteSpace(root))
         {
             WpfMessageBox.Show("フォルダを指定してください。", "情報不足", MessageBoxButton.OK, MessageBoxImage.Information);
@@ -2985,19 +3016,218 @@ public partial class MainViewModel : ObservableObject
             return;
         }
 
-        var files = EnumerateFilesRecursiveSafe(root);
-        if (files.Count == 0)
+        var errors = new List<string>();
+        _customScanCancellation = new CancellationTokenSource();
+        IsCustomDirectoryScanInProgress = true;
+        CustomDirectoryScanStatus = "配下を検索中…";
+        var addedCount = 0;
+        var missingCount = 0;
+        try
         {
-            WpfMessageBox.Show("配下に追加可能なファイルが見つかりませんでした。", "情報", MessageBoxButton.OK, MessageBoxImage.Information);
+            var token = _customScanCancellation.Token;
+            var files = await Task.Run(() => EnumerateFilesRecursiveSafe(root, errors, token), token);
+            if (!CustomTabs.Contains(tab))
+            {
+                CustomDirectoryScanStatus = "検索中にタブが削除されたため、追加しませんでした。";
+                return;
+            }
+
+            if (files.Count == 0)
+            {
+                CustomDirectoryScanStatus = "配下に追加可能なファイルがありません。";
+                WpfMessageBox.Show("配下に追加可能なファイルが見つかりませんでした。", "情報",
+                    MessageBoxButton.OK, MessageBoxImage.Information);
+                return;
+            }
+
+            for (var index = 0; index < files.Count; index++)
+            {
+                token.ThrowIfCancellationRequested();
+                if (!CustomTabs.Contains(tab))
+                {
+                    CustomDirectoryScanStatus = $"タブが削除されたため追加を中止しました（追加済み {addedCount} 件）。";
+                    return;
+                }
+
+                var file = files[index];
+                if (!File.Exists(file))
+                {
+                    missingCount++;
+                }
+                else if (tab.AddFile(file, selectByDefault: false))
+                {
+                    addedCount++;
+                }
+
+                if ((index + 1) % 100 == 0)
+                {
+                    CustomDirectoryScanStatus = $"一覧に追加中: {index + 1}/{files.Count} 件";
+                    await Task.Yield();
+                }
+            }
+
+            CustomDirectoryScanStatus = $"{files.Count} 件を確認し、{addedCount} 件追加しました。";
+            if (errors.Count > 0 || missingCount > 0)
+            {
+                var lines = new List<string>();
+                if (errors.Count > 0)
+                {
+                    lines.Add($"参照できなかったフォルダ: {errors.Count} 件");
+                    lines.AddRange(errors.Take(3));
+                }
+                if (missingCount > 0)
+                {
+                    lines.Add($"検索後に見つからなくなったファイル: {missingCount} 件");
+                }
+                WpfMessageBox.Show(string.Join(Environment.NewLine, lines), "検索結果",
+                    MessageBoxButton.OK, MessageBoxImage.Warning);
+            }
+        }
+        catch (OperationCanceledException)
+        {
+            CustomDirectoryScanStatus = $"検索・追加を中止しました（追加済み {addedCount} 件）。";
+        }
+        catch (Exception ex)
+        {
+            AppLogger.LogError("ScanCustomDirectory", ex);
+            CustomDirectoryScanStatus = $"検索・追加に失敗しました（追加済み {addedCount} 件）。";
+            WpfMessageBox.Show($"配下の検索・追加に失敗しました: {ex.Message}", "検索エラー",
+                MessageBoxButton.OK, MessageBoxImage.Warning);
+        }
+        finally
+        {
+            if (addedCount > 0)
+            {
+                UpdateBasket();
+                PersistCustomState();
+            }
+            _customScanCancellation?.Dispose();
+            _customScanCancellation = null;
+            IsCustomDirectoryScanInProgress = false;
+        }
+    }
+
+    [RelayCommand]
+    private void CancelCustomDirectoryScan() => _customScanCancellation?.Cancel();
+
+    private CustomPathRepairPreview? BuildCustomPathRepairPreview()
+    {
+        if (string.IsNullOrWhiteSpace(PathRepairOldRoot) || string.IsNullOrWhiteSpace(PathRepairNewRoot))
+        {
+            PathRepairStatus = "旧ルートと新ルートを入力してください。";
+            return null;
+        }
+
+        try
+        {
+            var paths = CustomTabs.SelectMany(tab => tab.GetAllSourcePaths())
+                .Concat(_customZipPlans.SelectMany(plan => plan.Items).Select(item => item.SourcePath))
+                .Concat(Settings.SelectionStateHistory.SelectMany(entry => entry.SelectedCustomTabs ?? new List<SelectionCustomTabState>())
+                    .SelectMany(tab => tab.SelectedSourcePaths ?? new List<string>()))
+                .Concat(Settings.SavedSelectionSets.SelectMany(entry => entry.SelectedCustomTabs ?? new List<SelectionCustomTabState>())
+                    .SelectMany(tab => tab.SelectedSourcePaths ?? new List<string>()));
+            var preview = CustomPathRepairService.Preview(PathRepairOldRoot.Trim(), PathRepairNewRoot.Trim(), paths);
+            PathRepairStatus = $"修復可能 {preview.Replacements.Count} 件 / 移動先なし {preview.MissingTargets.Count} 件 / 無効なパス {preview.InvalidPaths.Count} 件";
+            return preview;
+        }
+        catch (Exception ex) when (ex is ArgumentException or NotSupportedException or PathTooLongException)
+        {
+            PathRepairStatus = ex.Message;
+            return null;
+        }
+    }
+
+    [RelayCommand]
+    private void PreviewCustomPathRepair()
+    {
+        var preview = BuildCustomPathRepairPreview();
+        if (preview == null)
+        {
+            return;
+        }
+        var examples = preview.Replacements.Take(3)
+            .Select(pair => $"{pair.Key} → {pair.Value}");
+        var missing = preview.MissingTargets.Take(3);
+        WpfMessageBox.Show(
+            PathRepairStatus + "\n" + string.Join("\n", examples) +
+            (preview.MissingTargets.Count == 0 ? string.Empty :
+                "\n移動先が見つからない例:\n" + string.Join("\n", missing)),
+            "パス修復の確認", MessageBoxButton.OK, MessageBoxImage.Information);
+    }
+
+    [RelayCommand]
+    private void ApplyCustomPathRepair()
+    {
+        var preview = BuildCustomPathRepairPreview();
+        if (preview == null || preview.Replacements.Count == 0)
+        {
+            WpfMessageBox.Show("修復可能なパスがありません。", "パス修復", MessageBoxButton.OK, MessageBoxImage.Information);
+            return;
+        }
+        if (CustomTabs.Any(tab => !tab.CanReplaceSourcePaths(preview.Replacements)))
+        {
+            WpfMessageBox.Show("修復後に同じタブ内でパスが重複します。旧ルートと新ルートを確認してください。",
+                "パス修復", MessageBoxButton.OK, MessageBoxImage.Warning);
+            return;
+        }
+        if (WpfMessageBox.Show(
+                $"存在を確認できた {preview.Replacements.Count} 件のパスを修復しますか？\n" +
+                $"移動先が見つからない {preview.MissingTargets.Count} 件は変更しません。",
+                "パス修復", MessageBoxButton.YesNo, MessageBoxImage.Question) != MessageBoxResult.Yes)
+        {
             return;
         }
 
-        AddCustomFilesToSelectedTab(files, selectByDefault: false);
+        _isApplyingSelectionHistory = true;
+        try
+        {
+            foreach (var tab in CustomTabs)
+            {
+                tab.ReplaceSourcePaths(preview.Replacements);
+            }
+            for (var index = 0; index < _customZipPlans.Count; index++)
+            {
+                var plan = _customZipPlans[index];
+                _customZipPlans[index] = plan with
+                {
+                    Items = plan.Items.Select(item => preview.Replacements.TryGetValue(item.SourcePath, out var path)
+                        ? item with { SourcePath = path, FileName = Path.GetFileName(path),
+                            FolderName = Path.GetFileName(Path.GetDirectoryName(path) ?? string.Empty) }
+                        : item).ToList()
+                };
+            }
+            foreach (var entry in Settings.SelectionStateHistory.Concat(Settings.SavedSelectionSets))
+            {
+                foreach (var tab in entry.SelectedCustomTabs ?? new List<SelectionCustomTabState>())
+                {
+                    tab.SelectedSourcePaths = (tab.SelectedSourcePaths ?? new List<string>())
+                        .Select(path => preview.Replacements.TryGetValue(path, out var replacement) ? replacement : path)
+                        .Distinct(StringComparer.OrdinalIgnoreCase)
+                        .ToList();
+                }
+                entry.CustomZipPlans = (entry.CustomZipPlans ?? new List<CustomZipPlan>())
+                    .Select(plan => plan with
+                    {
+                        Items = plan.Items.Select(item => preview.Replacements.TryGetValue(item.SourcePath, out var path)
+                            ? item with { SourcePath = path, FileName = Path.GetFileName(path),
+                                FolderName = Path.GetFileName(Path.GetDirectoryName(path) ?? string.Empty) }
+                            : item).ToList()
+                    }).ToList();
+            }
+        }
+        finally
+        {
+            _isApplyingSelectionHistory = false;
+        }
+        UpdateBasket();
+        PersistCustomState();
+        PathRepairStatus = $"{preview.Replacements.Count} 件の参照先を修復しました。未検出 {preview.MissingTargets.Count} 件は変更していません。";
     }
 
-    private void AddCustomFilesToSelectedTab(IEnumerable<string> paths, bool selectByDefault)
+    private void AddCustomFilesToSelectedTab(IEnumerable<string> paths, bool selectByDefault, CustomTabViewModel? targetTab = null)
     {
-        if (SelectedCustomTab == null)
+        var tab = targetTab ?? SelectedCustomTab;
+        if (tab == null)
         {
             return;
         }
@@ -3025,13 +3255,13 @@ public partial class MainViewModel : ObservableObject
                 continue;
             }
 
-            if (SelectedCustomTab.AddFile(trimmed, selectByDefault))
+            if (tab.AddFile(trimmed, selectByDefault))
             {
                 addedCount++;
             }
         }
 
-        SelectedCustomTab.NewFilePath = string.Empty;
+        tab.NewFilePath = string.Empty;
         UpdateBasket();
         PersistCustomState();
 
@@ -3067,7 +3297,8 @@ public partial class MainViewModel : ObservableObject
         }
     }
 
-    private static IReadOnlyList<string> EnumerateFilesRecursiveSafe(string root)
+    private static IReadOnlyList<string> EnumerateFilesRecursiveSafe(
+        string root, List<string>? inaccessible = null, CancellationToken cancellationToken = default)
     {
         var results = new List<string>();
         var pending = new Stack<string>();
@@ -3075,12 +3306,14 @@ public partial class MainViewModel : ObservableObject
 
         while (pending.Count > 0)
         {
+            cancellationToken.ThrowIfCancellationRequested();
             var directory = pending.Pop();
 
             try
             {
                 foreach (var file in Directory.EnumerateFiles(directory, "*", SearchOption.TopDirectoryOnly))
                 {
+                    cancellationToken.ThrowIfCancellationRequested();
                     if (ShouldExcludeFromCustomSelection(file))
                     {
                         continue;
@@ -3091,10 +3324,12 @@ public partial class MainViewModel : ObservableObject
             }
             catch (UnauthorizedAccessException)
             {
+                inaccessible?.Add(directory);
                 continue;
             }
             catch (IOException)
             {
+                inaccessible?.Add(directory);
                 continue;
             }
 
@@ -3102,6 +3337,7 @@ public partial class MainViewModel : ObservableObject
             {
                 foreach (var child in Directory.EnumerateDirectories(directory, "*", SearchOption.TopDirectoryOnly))
                 {
+                    cancellationToken.ThrowIfCancellationRequested();
                     if (ShouldSkipDirectoryTraversal(child))
                     {
                         continue;
@@ -3112,9 +3348,11 @@ public partial class MainViewModel : ObservableObject
             }
             catch (UnauthorizedAccessException)
             {
+                inaccessible?.Add(directory);
             }
             catch (IOException)
             {
+                inaccessible?.Add(directory);
             }
         }
 
@@ -3209,7 +3447,25 @@ public partial class MainViewModel : ObservableObject
             return;
         }
 
-        System.Windows.Clipboard.SetText(UploadListText);
+        for (var attempt = 0; attempt < 3; attempt++)
+        {
+            try
+            {
+                System.Windows.Clipboard.SetText(UploadListText);
+                return;
+            }
+            catch (System.Runtime.InteropServices.COMException ex)
+            {
+                if (attempt == 2)
+                {
+                    AppLogger.LogError("CopyUploadList", ex);
+                    WpfMessageBox.Show("クリップボードが使用中です。少し待ってから再度コピーしてください。",
+                        "コピーできません", MessageBoxButton.OK, MessageBoxImage.Warning);
+                    return;
+                }
+                Thread.Sleep(50);
+            }
+        }
     }
 
     [RelayCommand]
@@ -3335,7 +3591,6 @@ public partial class MainViewModel : ObservableObject
         _settingsService.Save(Settings);
 
         var outputRoot = OutputFolderPreview;
-        Directory.CreateDirectory(outputRoot);
 
         var selectedTransferItems = BasketItems
             .Where(b => !b.IsMissing && !IsCustomZipSummaryItem(b) && !b.IsAlreadyDownloaded)
@@ -3363,7 +3618,49 @@ public partial class MainViewModel : ObservableObject
             return;
         }
 
-        var confirmMessage = BuildQueueConfirmMessage(selectedTransferItems, outputRoot);
+        var preflightTargets = selectedTransferItems.Select(item =>
+        {
+            var asset = FindAssetBySourcePath(item.SourcePath)
+                        ?? FindLogicalAsset(item.Code, item.ModuleVersion, out _)
+                        ?? CreateAssetFromBasketItem(item);
+            var versionFolder = GetSafeVersionFolderName(NormalizeHelixVersionLabel(item.HelixVersion));
+            return new TransferPreflightTarget(
+                asset?.SourcePath ?? item.SourcePath,
+                Path.Combine(outputRoot, versionFolder, asset?.FileName ?? item.AssetFileName));
+        }).ToList();
+
+        var usedArchiveBaseNames = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        var zipPlans = GetCustomZipPlans();
+        foreach (var plan in zipPlans)
+        {
+            var requestedName = GetSafeArchiveBaseName(plan.ArchiveBaseName, plan.TabName);
+            var uniqueName = GetUniqueArchiveBaseName(requestedName, usedArchiveBaseNames);
+            preflightTargets.Add(new TransferPreflightTarget(
+                string.Empty,
+                Path.Combine(outputRoot, $"{uniqueName}.zip")));
+        }
+
+        var availableBytes = DiskSpaceService.TryGetAvailableBytes(outputRoot);
+        var preflight = TransferPreflightService.Check(
+            preflightTargets,
+            zipPlans.SelectMany(plan => plan.Items).Select(item => item.SourcePath),
+            availableBytes);
+        if (!preflight.CanStart)
+        {
+            var lines = preflight.Errors.Take(8).ToList();
+            if (preflight.Errors.Count > lines.Count)
+            {
+                lines.Add($"ほか {preflight.Errors.Count - lines.Count} 件");
+            }
+            WpfMessageBox.Show(
+                "キュー追加前の確認で問題が見つかりました。\n" + string.Join("\n", lines),
+                "事前確認",
+                MessageBoxButton.OK,
+                MessageBoxImage.Warning);
+            return;
+        }
+
+        var confirmMessage = BuildQueueConfirmMessage(selectedTransferItems, outputRoot, preflight.SourceBytes, availableBytes);
         var confirmResult = WpfMessageBox.Show(
             confirmMessage,
             "キュー追加確認",
@@ -3374,6 +3671,7 @@ public partial class MainViewModel : ObservableObject
             return;
         }
 
+        Directory.CreateDirectory(outputRoot);
         var batches = selectedTransferItems
             .GroupBy(item => NormalizeHelixVersionLabel(item.HelixVersion))
             .ToList();
@@ -4165,7 +4463,8 @@ public partial class MainViewModel : ObservableObject
         return $"{item.HelixVersion}|{item.Code}|{item.AssetFileName}|{item.SourcePath}";
     }
 
-    private string BuildQueueConfirmMessage(IReadOnlyList<BasketItemViewModel> selectedItems, string outputRoot)
+    private string BuildQueueConfirmMessage(IReadOnlyList<BasketItemViewModel> selectedItems, string outputRoot,
+        long sourceBytes, long? availableBytes)
     {
         var lines = new List<string>
         {
@@ -4173,6 +4472,10 @@ public partial class MainViewModel : ObservableObject
             $"会社名: {CompanyName}",
             $"出力先: {outputRoot}",
             $"件数: {selectedItems.Count}",
+            $"元ファイル合計: {sourceBytes / 1024d / 1024d:N1} MB（圧縮前）",
+            availableBytes.HasValue
+                ? $"出力先の空き: {availableBytes.Value / 1024d / 1024d:N1} MB"
+                : "出力先の空き容量は確認できませんでした。",
             string.Empty,
             "対象ファイル:"
         };
@@ -4194,6 +4497,101 @@ public partial class MainViewModel : ObservableObject
         }
 
         return string.Join(Environment.NewLine, lines);
+    }
+
+    private SelectionManifestDocument BuildCurrentSelectionManifest()
+    {
+        var outputRoot = OutputFolderPreview;
+        var entries = new List<SelectionManifestEntry>();
+        foreach (var item in BasketItems.Where(item => !IsCustomZipSummaryItem(item)))
+        {
+            var destination = !string.IsNullOrWhiteSpace(item.DestinationPath)
+                ? item.DestinationPath
+                : TryBuildBasketDestinationPath(item.HelixVersion, item.AssetFileName);
+            var key = $"FILE|{item.HelixVersion}|{item.Code}|{item.Os}|{item.AssetFileName}";
+            entries.Add(SelectionManifestService.CreateEntry("ファイル", key, item.SourcePath,
+                destination ?? string.Empty));
+        }
+
+        var usedNames = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        foreach (var plan in GetCustomZipPlans())
+        {
+            var archive = GetUniqueArchiveBaseName(
+                GetSafeArchiveBaseName(plan.ArchiveBaseName, plan.TabName), usedNames);
+            var destination = Path.Combine(outputRoot, archive + ".zip");
+            foreach (var member in plan.Items)
+            {
+                var key = $"ZIP|{plan.TabName}|{archive}|{member.FolderName}|{member.FileName}";
+                entries.Add(SelectionManifestService.CreateEntry("ZIP内", key, member.SourcePath, destination));
+            }
+        }
+        return SelectionManifestService.Create(entries);
+    }
+
+    [RelayCommand]
+    private void ExportSelectionManifest()
+    {
+        var document = BuildCurrentSelectionManifest();
+        if (document.Items.Count == 0)
+        {
+            WpfMessageBox.Show("明細に出力する選定項目がありません。", "選定明細",
+                MessageBoxButton.OK, MessageBoxImage.Information);
+            return;
+        }
+        var dialog = new Win32.SaveFileDialog
+        {
+            Filter = "選定明細 JSON (*.json)|*.json",
+            FileName = $"選定明細_{DateTime.Now:yyyyMMdd_HHmm}.json"
+        };
+        if (dialog.ShowDialog() != true)
+        {
+            return;
+        }
+        try
+        {
+            SelectionManifestService.Save(dialog.FileName, document);
+            WpfMessageBox.Show($"{document.Items.Count} 件の選定明細を出力しました。", "選定明細",
+                MessageBoxButton.OK, MessageBoxImage.Information);
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+        {
+            AppLogger.LogError("ExportSelectionManifest", ex);
+            WpfMessageBox.Show(ex.Message, "選定明細の出力に失敗", MessageBoxButton.OK, MessageBoxImage.Warning);
+        }
+    }
+
+    [RelayCommand]
+    private void ExportSelectionManifestDiff()
+    {
+        var open = new Win32.OpenFileDialog { Filter = "選定明細 JSON (*.json)|*.json" };
+        if (open.ShowDialog() != true)
+        {
+            return;
+        }
+        try
+        {
+            var previous = SelectionManifestService.Load(open.FileName);
+            var current = BuildCurrentSelectionManifest();
+            var differences = SelectionManifestService.Compare(previous, current);
+            var save = new Win32.SaveFileDialog
+            {
+                Filter = "差分 CSV (*.csv)|*.csv",
+                FileName = $"選定差分_{DateTime.Now:yyyyMMdd_HHmm}.csv"
+            };
+            if (save.ShowDialog() != true)
+            {
+                return;
+            }
+            SelectionManifestService.SaveDiffCsv(save.FileName, differences);
+            WpfMessageBox.Show($"差分 {differences.Count} 件を出力しました（追加・削除・変更）。\n" +
+                               "変更判定には元パス・容量・更新日時を使用します。",
+                "選定差分", MessageBoxButton.OK, MessageBoxImage.Information);
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or JsonException or ArgumentException)
+        {
+            AppLogger.LogError("ExportSelectionManifestDiff", ex);
+            WpfMessageBox.Show(ex.Message, "選定差分の出力に失敗", MessageBoxButton.OK, MessageBoxImage.Warning);
+        }
     }
 
     private async Task ExecuteCustomZipPlansAsync(string outputRoot, long customZipBatchId)
@@ -4580,6 +4978,22 @@ public partial class MainViewModel : ObservableObject
             return;
         }
 
+        try
+        {
+            if (!OutputDeletionGuard.TryValidate(path, OutputBaseFolder, out var reason))
+            {
+                WpfMessageBox.Show(reason, "削除できません", MessageBoxButton.OK, MessageBoxImage.Warning);
+                return;
+            }
+        }
+        catch (Exception ex)
+        {
+            AppLogger.LogError("ValidateHistoryDeletion", ex);
+            WpfMessageBox.Show($"削除対象を確認できませんでした: {ex.Message}", "削除できません",
+                MessageBoxButton.OK, MessageBoxImage.Warning);
+            return;
+        }
+
         var result = WpfMessageBox.Show($"ディレクトリを削除しますか？\n{path}", "確認", MessageBoxButton.YesNo, MessageBoxImage.Warning);
         if (result != MessageBoxResult.Yes)
         {
@@ -4635,7 +5049,7 @@ public partial class MainViewModel : ObservableObject
         while (!string.IsNullOrWhiteSpace(currentPath))
         {
             var fullPath = Path.GetFullPath(currentPath.TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar));
-            if (!fullPath.StartsWith(boundaryFullPath, StringComparison.OrdinalIgnoreCase))
+            if (!fullPath.StartsWith(boundaryFullPath + Path.DirectorySeparatorChar, StringComparison.OrdinalIgnoreCase))
             {
                 break;
             }
@@ -5238,6 +5652,87 @@ public partial class MainViewModel : ObservableObject
         SelectedSelectionStateHistoryEntry = SelectionStateHistoryEntries.FirstOrDefault();
     }
 
+    private void LoadSavedSelectionSetsFromSettings()
+    {
+        var selectedName = SelectedSavedSelectionSet?.DisplayName;
+        var sets = (Settings.SavedSelectionSets ?? new List<SelectionStateHistoryEntry>())
+            .Where(entry => entry != null && !string.IsNullOrWhiteSpace(entry.DisplayName))
+            .GroupBy(entry => entry.DisplayName.Trim(), StringComparer.OrdinalIgnoreCase)
+            .Select(group => group.OrderByDescending(entry => entry.SavedAtUtc).First())
+            .OrderBy(entry => entry.DisplayName, StringComparer.CurrentCultureIgnoreCase)
+            .ToList();
+        Settings.SavedSelectionSets = sets;
+        SavedSelectionSetEntries.Clear();
+        foreach (var entry in sets)
+        {
+            SavedSelectionSetEntries.Add(entry);
+        }
+        SelectedSavedSelectionSet = sets.FirstOrDefault(entry =>
+            entry.DisplayName.Equals(selectedName, StringComparison.OrdinalIgnoreCase)) ?? sets.FirstOrDefault();
+    }
+
+    [RelayCommand]
+    private void SaveNamedSelectionSet()
+    {
+        var name = SavedSelectionSetName.Trim();
+        if (name.Length == 0)
+        {
+            WpfMessageBox.Show("保存名を入力してください。", "選定セット", MessageBoxButton.OK, MessageBoxImage.Information);
+            return;
+        }
+
+        var existing = Settings.SavedSelectionSets.FirstOrDefault(entry =>
+            entry.DisplayName.Equals(name, StringComparison.OrdinalIgnoreCase));
+        if (existing != null && WpfMessageBox.Show(
+                $"選定セット「{existing.DisplayName}」を上書きしますか？", "選定セット",
+                MessageBoxButton.YesNo, MessageBoxImage.Question) != MessageBoxResult.Yes)
+        {
+            return;
+        }
+
+        var snapshot = CreateCurrentSelectionStateHistoryEntry();
+        snapshot.DisplayName = name;
+        if (existing != null)
+        {
+            Settings.SavedSelectionSets.Remove(existing);
+        }
+        Settings.SavedSelectionSets.Add(snapshot);
+        _settingsService.Save(Settings);
+        LoadSavedSelectionSetsFromSettings();
+        SelectedSavedSelectionSet = SavedSelectionSetEntries.First(entry =>
+            entry.DisplayName.Equals(name, StringComparison.OrdinalIgnoreCase));
+    }
+
+    [RelayCommand]
+    private void ApplyNamedSelectionSet()
+    {
+        if (SelectedSavedSelectionSet == null)
+        {
+            WpfMessageBox.Show("呼び出す選定セットを選択してください。", "選定セット",
+                MessageBoxButton.OK, MessageBoxImage.Information);
+            return;
+        }
+        ApplySelectionStateHistoryCore(SelectedSavedSelectionSet);
+    }
+
+    [RelayCommand]
+    private void DeleteNamedSelectionSet()
+    {
+        var selected = SelectedSavedSelectionSet;
+        if (selected == null)
+        {
+            return;
+        }
+        if (WpfMessageBox.Show($"選定セット「{selected.DisplayName}」を削除しますか？", "選定セット",
+                MessageBoxButton.YesNo, MessageBoxImage.Question) != MessageBoxResult.Yes)
+        {
+            return;
+        }
+        Settings.SavedSelectionSets.Remove(selected);
+        _settingsService.Save(Settings);
+        LoadSavedSelectionSetsFromSettings();
+    }
+
     private void SaveCurrentSelectionStateToHistory()
     {
         var snapshot = CreateCurrentSelectionStateHistoryEntry();
@@ -5282,6 +5777,7 @@ public partial class MainViewModel : ObservableObject
             .Select(tab => new SelectionCustomTabState
             {
                 TabName = tab.Name,
+                ColumnsInput = tab.ColumnsInput,
                 SelectedSourcePaths = tab.GetSelectedFiles()
                     .Select(file => file.SourcePath)
                     .Where(path => !string.IsNullOrWhiteSpace(path))
@@ -5389,12 +5885,36 @@ public partial class MainViewModel : ObservableObject
             {
                 if (selectedPathsByTab.TryGetValue(tab.Name, out var selectedPaths))
                 {
+                    foreach (var path in selectedPaths.Where(File.Exists))
+                    {
+                        if (!tab.HasFile(path))
+                        {
+                            tab.AddFile(path, selectByDefault: false);
+                        }
+                    }
                     tab.SetSelectedByPaths(selectedPaths);
                 }
                 else
                 {
                     tab.ClearSelection();
                 }
+            }
+
+            foreach (var state in entry.SelectedCustomTabs ?? new List<SelectionCustomTabState>())
+            {
+                if (string.IsNullOrWhiteSpace(state.TabName) ||
+                    CustomTabs.Any(tab => tab.Name.Equals(state.TabName, StringComparison.OrdinalIgnoreCase)))
+                {
+                    continue;
+                }
+                var tab = new CustomTabViewModel(state.TabName,
+                    (state.ColumnsInput ?? string.Empty).Split(',', StringSplitOptions.RemoveEmptyEntries));
+                tab.Changed += OnCustomTabChanged;
+                foreach (var path in (state.SelectedSourcePaths ?? new List<string>()).Where(File.Exists))
+                {
+                    tab.AddFile(path);
+                }
+                CustomTabs.Add(tab);
             }
 
             SetCustomZipPlans(entry.CustomZipPlans ?? new List<CustomZipPlan>());
@@ -9351,4 +9871,3 @@ public partial class MainViewModel : ObservableObject
         return string.Join(Environment.NewLine, lines);
     }
 }
-

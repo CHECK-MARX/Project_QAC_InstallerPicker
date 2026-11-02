@@ -32,10 +32,10 @@ public partial class CustomTabPreviewWindow : Window, INotifyPropertyChanged
         InitializeComponent();
         DataContext = this;
 
-        MainVm.CustomTabs.CollectionChanged += OnCustomTabsCollectionChanged;
-        AttachHandlers(MainVm.CustomTabs);
         RefreshPreview();
         LoadRegisteredZipPlansFromMainViewModel();
+        MainVm.CustomTabs.CollectionChanged += OnCustomTabsCollectionChanged;
+        AttachHandlers(MainVm.CustomTabs);
         Closed += OnClosed;
     }
 
@@ -342,6 +342,11 @@ public partial class CustomTabPreviewWindow : Window, INotifyPropertyChanged
     }
 
     private void OnClosed(object? sender, EventArgs e)
+    {
+        ReleaseHandlers();
+    }
+
+    public void ReleaseHandlers()
     {
         MainVm.CustomTabs.CollectionChanged -= OnCustomTabsCollectionChanged;
         DetachHandlers(_attachedTabs.ToArray());
