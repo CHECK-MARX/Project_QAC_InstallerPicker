@@ -12,11 +12,6 @@ jobs:
     runs-on: windows-latest
     permissions:
       contents: read
-    env:
-      SIGN_CERT_BASE64: ${{ secrets.WINDOWS_SIGN_CERT_BASE64 }}
-      SIGN_CERT_PASSWORD: ${{ secrets.WINDOWS_SIGN_CERT_PASSWORD }}
-      SIGN_TIMESTAMP_URL: ${{ vars.WINDOWS_SIGN_TIMESTAMP_URL }}
-
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -50,17 +45,28 @@ jobs:
           ./.tools/dotnet-CycloneDX "QACInstallerPicker.App/QACInstallerPicker.App.csproj" --output "artifacts/sbom" --output-format Json --filename "bom.cdx.json"
 
       - name: Authenticode sign published executables
-        if: ${{ env.SIGN_CERT_BASE64 != '' && env.SIGN_CERT_PASSWORD != '' }}
+        id: sign
+        if: ${{ github.event_name != 'pull_request' }}
         shell: pwsh
+        env:
+          SIGN_CERT_BASE64: ${{ secrets.WINDOWS_SIGN_CERT_BASE64 }}
+          SIGN_CERT_PASSWORD: ${{ secrets.WINDOWS_SIGN_CERT_PASSWORD }}
+          SIGN_TIMESTAMP_URL: ${{ vars.WINDOWS_SIGN_TIMESTAMP_URL }}
         run: |
+          if ([string]::IsNullOrWhiteSpace($env:SIGN_CERT_BASE64) -or
+              [string]::IsNullOrWhiteSpace($env:SIGN_CERT_PASSWORD)) {
+            "signed=false" >> $env:GITHUB_OUTPUT
+            return
+          }
+
           $timestampUrl = if ([string]::IsNullOrWhiteSpace($env:SIGN_TIMESTAMP_URL)) { "http://timestamp.digicert.com" } else { $env:SIGN_TIMESTAMP_URL }
-          $tools = @(
-            "${env:ProgramFiles(x86)}\Windows Kits\10\bin\x64\signtool.exe",
-            "${env:ProgramFiles(x86)}\Windows Kits\10\App Certification Kit\signtool.exe"
-          )
-          $signtool = $tools | Where-Object { Test-Path $_ } | Select-Object -First 1
+          $sdkBin = Join-Path ${env:ProgramFiles(x86)} "Windows Kits\10\bin"
+          $signtool = Get-ChildItem -LiteralPath $sdkBin -Filter signtool.exe -File -Recurse -ErrorAction SilentlyContinue |
+            Where-Object { $_.FullName -match '\\x64\\signtool\.exe$' } |
+            Sort-Object FullName -Descending |
+            Select-Object -First 1 -ExpandProperty FullName
           if ([string]::IsNullOrWhiteSpace($signtool)) {
-            throw "signtool.exe was not found on runner."
+            throw "x64 signtool.exe was not found in the Windows SDK."
           }
 
           $certPath = Join-Path $env:RUNNER_TEMP "codesign.pfx"
@@ -76,21 +82,22 @@ jobs:
               if ($LASTEXITCODE -ne 0) {
                 throw "Failed to sign: $($target.FullName)"
               }
-              & $signtool verify /pa $target.FullName
+              & $signtool verify /pa /v $target.FullName
               if ($LASTEXITCODE -ne 0) {
                 throw "Failed to verify signature: $($target.FullName)"
               }
             }
+            "signed=true" >> $env:GITHUB_OUTPUT
           }
           finally {
             Remove-Item $certPath -Force -ErrorAction SilentlyContinue
           }
 
       - name: Warn when signing skipped
-        if: ${{ env.SIGN_CERT_BASE64 == '' || env.SIGN_CERT_PASSWORD == '' }}
+        if: ${{ steps.sign.outputs.signed != 'true' }}
         shell: pwsh
         run: |
-          Write-Host "::warning::Code signing was skipped. Configure WINDOWS_SIGN_CERT_BASE64 and WINDOWS_SIGN_CERT_PASSWORD to enable Authenticode signing."
+          Write-Host "::warning::Code signing was skipped. Configure WINDOWS_SIGN_CERT_BASE64 and WINDOWS_SIGN_CERT_PASSWORD for push or workflow_dispatch builds."
 
       - name: Build metadata
         id: meta
@@ -104,6 +111,7 @@ jobs:
           run_number=$env:GITHUB_RUN_NUMBER
           workflow=$env:GITHUB_WORKFLOW
           built_at_utc=$([DateTime]::UtcNow.ToString("o"))
+          signing=${{ steps.sign.outputs.signed == 'true' && 'signed' || 'unsigned' }}
           "@ | Set-Content -Path artifacts/publish/BUILD_INFO.txt -Encoding UTF8
 
       - name: Pack artifact zip
@@ -115,7 +123,7 @@ jobs:
       - name: Upload artifact
         uses: actions/upload-artifact@v4
         with:
-          name: QACInstallerPicker-win-x64-${{ steps.meta.outputs.short_sha }}
+          name: QACInstallerPicker-win-x64-${{ steps.meta.outputs.short_sha }}-${{ steps.sign.outputs.signed == 'true' && 'signed' || 'unsigned' }}
           path: |
             artifacts/QACInstallerPicker-win-x64.zip
             artifacts/publish/**

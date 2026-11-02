@@ -103,6 +103,24 @@ dotnet publish .\QACInstallerPicker.App\QACInstallerPicker.App.csproj -c Release
 QACInstallerPicker.App\bin\Release\net8.0-windows\win-x64\publish\QACInstallerPicker.App.exe
 ```
 
+### 配布物のコード署名
+
+CI は `push` または手動実行時に、コード署名用証明書の PFX とパスワードが設定されていれば、発行した EXE に Authenticode 署名と RFC 3161 タイムスタンプを付け、SignTool で検証します。プルリクエストでは署名しません。成果物名と `BUILD_INFO.txt` に署名の有無を記録します。
+
+GitHub リポジトリの **Settings → Secrets and variables → Actions** に次を登録してください。
+
+- `WINDOWS_SIGN_CERT_BASE64`: 秘密鍵を含むコード署名用 PFX の Base64 文字列
+- `WINDOWS_SIGN_CERT_PASSWORD`: その PFX のパスワード
+- `WINDOWS_SIGN_TIMESTAMP_URL`: 任意。未設定時は DigiCert の RFC 3161 タイムスタンプを使用
+
+PFX の Base64 文字列は PowerShell でクリップボードに作れます。証明書の実際のパスに置き換えて実行し、GitHub のシークレット入力欄に貼り付けてください。
+
+```powershell
+[Convert]::ToBase64String([IO.File]::ReadAllBytes('C:\path\to\codesign.pfx')) | Set-Clipboard
+```
+
+登録後にワークフローを再実行し、`Authenticode sign published executables` が成功したことと、成果物名が `-signed` で終わることを確認してください。Base64 は暗号化ではないため、PFX・Base64 文字列・パスワードをリポジトリに保存しないでください。貼り付け後はクリップボードを消去してください。
+
 ### SBOM 生成 (CycloneDX JSON)
 
 ```powershell
